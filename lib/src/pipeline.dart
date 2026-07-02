@@ -76,8 +76,7 @@ Future<BuildResult> buildNpmPackage(BuildOptions options) async {
   final target = readTargetPackage(options.packagePath);
   _ensureResolved(target, verbose: options.verbose);
 
-  final npmName =
-      options.npmPackageName ?? target.name.replaceAll('_', '-');
+  final npmName = options.npmPackageName ?? target.name.replaceAll('_', '-');
   _validateNpmName(npmName);
   final globalExportKey =
       '__dtb_exports_${npmName.replaceAll(RegExp('[^A-Za-z0-9_]'), '_')}__';
@@ -96,9 +95,9 @@ Future<BuildResult> buildNpmPackage(BuildOptions options) async {
     p.join(target.rootPath, '.dart_tool', 'dart_typescript_builder'),
   )..createSync(recursive: true);
   final facadePath = p.join(workDir.path, 'facade.dart');
-  File(facadePath).writeAsStringSync(
-    generateFacade(api, globalExportKey: globalExportKey),
-  );
+  File(
+    facadePath,
+  ).writeAsStringSync(generateFacade(api, globalExportKey: globalExportKey));
 
   // -- Stages 3 + 4 + 5: compile, declarations, npm package. ----------------
   final outputDir = Directory(p.canonicalize(options.outputPath))
@@ -141,11 +140,10 @@ void _ensureResolved(TargetPackageInfo target, {required bool verbose}) {
   if (verbose) {
     stderr.writeln('[pub] resolving ${target.name} (dart pub get)');
   }
-  final result = Process.runSync(
-    Platform.resolvedExecutable,
-    ['pub', 'get'],
-    workingDirectory: target.rootPath,
-  );
+  final result = Process.runSync(Platform.resolvedExecutable, [
+    'pub',
+    'get',
+  ], workingDirectory: target.rootPath);
   if (result.exitCode != 0) {
     throw BuildException(
       'dart pub get failed in ${target.rootPath} '
@@ -155,7 +153,9 @@ void _ensureResolved(TargetPackageInfo target, {required bool verbose}) {
 }
 
 void _validateNpmName(String name) {
-  final valid = RegExp(r'^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$');
+  final valid = RegExp(
+    r'^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$',
+  );
   if (!valid.hasMatch(name)) {
     throw BuildException("'$name' is not a valid npm package name");
   }

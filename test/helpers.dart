@@ -13,14 +13,16 @@ void ensureFixtureResolved(String name) {
   if (File(p.join(root, '.dart_tool', 'package_config.json')).existsSync()) {
     return;
   }
-  final result = Process.runSync(
-    Platform.resolvedExecutable,
-    ['pub', 'get', '--offline'],
-    workingDirectory: root,
-  );
+  final result = Process.runSync(Platform.resolvedExecutable, [
+    'pub',
+    'get',
+    '--offline',
+  ], workingDirectory: root);
   if (result.exitCode != 0) {
-    throw StateError('dart pub get failed for fixture $name:\n'
-        '${result.stdout}\n${result.stderr}');
+    throw StateError(
+      'dart pub get failed for fixture $name:\n'
+      '${result.stdout}\n${result.stderr}',
+    );
   }
 }
 

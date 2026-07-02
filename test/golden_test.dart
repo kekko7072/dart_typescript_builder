@@ -25,20 +25,23 @@ void main() {
 
     test('api model shape', () {
       expect(api.dartPackageName, 'hello_logic');
-      expect(
-        api.functions.map((f) => f.name),
-        ['add', 'greet', 'half', 'isEven'],
-      );
+      expect(api.functions.map((f) => f.name), [
+        'add',
+        'greet',
+        'half',
+        'isEven',
+      ]);
       expect(api.classes.map((c) => c.name), ['Counter']);
       final counter = api.classes.single;
       expect(counter.factoryName, 'createCounter');
       expect(counter.properties.map((f) => f.name), ['label', 'count']);
       expect(counter.properties.first.isReadonly, isTrue); // final label
       expect(counter.properties.last.isReadonly, isFalse); // mutable count
-      expect(
-        counter.methods.map((m) => m.name),
-        ['increment', 'describe', 'clear'],
-      );
+      expect(counter.methods.map((m) => m.name), [
+        'increment',
+        'describe',
+        'clear',
+      ]);
     });
 
     test('facade matches golden', () {
@@ -50,11 +53,7 @@ void main() {
     });
 
     test('.d.ts matches golden', () {
-      _expectGolden(
-        generateDts(api),
-        'hello_logic/index.d.ts',
-        update: update,
-      );
+      _expectGolden(generateDts(api), 'hello_logic/index.d.ts', update: update);
     });
   });
 }

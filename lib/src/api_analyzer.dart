@@ -51,11 +51,42 @@ const _reservedMemberNames = {
 
 /// TypeScript reserved words that cannot be used as `export function` names.
 const _tsReservedWords = {
-  'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger',
-  'default', 'delete', 'do', 'else', 'enum', 'export', 'extends', 'false',
-  'finally', 'for', 'function', 'if', 'import', 'in', 'instanceof', 'new',
-  'null', 'return', 'super', 'switch', 'this', 'throw', 'true', 'try',
-  'typeof', 'var', 'void', 'while', 'with',
+  'break',
+  'case',
+  'catch',
+  'class',
+  'const',
+  'continue',
+  'debugger',
+  'default',
+  'delete',
+  'do',
+  'else',
+  'enum',
+  'export',
+  'extends',
+  'false',
+  'finally',
+  'for',
+  'function',
+  'if',
+  'import',
+  'in',
+  'instanceof',
+  'new',
+  'null',
+  'return',
+  'super',
+  'switch',
+  'this',
+  'throw',
+  'true',
+  'try',
+  'typeof',
+  'var',
+  'void',
+  'while',
+  'with',
 };
 
 /// Reads `pubspec.yaml` and locates the conventional public entrypoint
@@ -251,7 +282,8 @@ FunctionApi _lowerFunction(
       'generic $label',
       file: _fileOf(element),
       line: _lineOf(element),
-      hint: 'type parameters do not cross the boundary; '
+      hint:
+          'type parameters do not cross the boundary; '
           'runtime generic checks cannot be preserved in TypeScript.',
     );
   }
@@ -311,7 +343,8 @@ ClassApi _lowerClass(ClassElement element) {
       "generic class '$className'",
       file: file,
       line: line,
-      hint: 'Dart reifies generics, TypeScript erases them — generic classes '
+      hint:
+          'Dart reifies generics, TypeScript erases them — generic classes '
           'are out of scope for the boundary.',
     );
   }
@@ -330,7 +363,8 @@ ClassApi _lowerClass(ClassElement element) {
       "class '$className' uses inheritance (extends/with/implements)",
       file: file,
       line: line,
-      hint: 'class hierarchies are planned for Phase 3; '
+      hint:
+          'class hierarchies are planned for Phase 3; '
           'Phase 1 supports simple data classes only.',
     );
   }
@@ -408,7 +442,8 @@ ClassApi _lowerClass(ClassElement element) {
   }
   final setterNames = {
     for (final setter in element.setters)
-      if (!setter.isSynthetic && !setter.isStatic) setter.name?.replaceAll('=', ''),
+      if (!setter.isSynthetic && !setter.isStatic)
+        setter.name?.replaceAll('=', ''),
   };
   for (final getter in element.getters) {
     if (getter.isSynthetic || getter.isStatic) continue;
@@ -452,7 +487,8 @@ ClassApi _lowerClass(ClassElement element) {
         "static member '$className.$methodName'",
         file: _fileOf(method),
         line: _lineOf(method),
-        hint: 'static members are planned for Phase 3; '
+        hint:
+            'static members are planned for Phase 3; '
             'expose a top-level function for now.',
       );
     }
@@ -528,7 +564,8 @@ BoundaryType _lowerType(
   } else if (display.startsWith('Stream<')) {
     hint = 'Stream -> AsyncIterable marshalling is planned for Phase 4.';
   } else if (type is types.InterfaceType) {
-    hint = 'class-typed parameters/returns are planned for Phase 3; '
+    hint =
+        'class-typed parameters/returns are planned for Phase 3; '
         'Phase 1 supports primitives only.';
   } else {
     hint = null;

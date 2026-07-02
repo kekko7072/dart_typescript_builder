@@ -27,7 +27,8 @@ void main(List<String> arguments) async {
         ..addOption(
           'module',
           allowed: ['commonjs', 'cjs', 'esm', 'module'],
-          help: 'Node module format '
+          help:
+              'Node module format '
               '(default: commonjs for dart2js, esm for wasm).',
         )
         ..addOption(
@@ -72,8 +73,10 @@ void main(List<String> arguments) async {
       ),
     );
     stdout
-      ..writeln('Built npm package `${result.npmName}` '
-          '(engine: ${result.engineId}) in ${result.outputDir}')
+      ..writeln(
+        'Built npm package `${result.npmName}` '
+        '(engine: ${result.engineId}) in ${result.outputDir}',
+      )
       ..writeln('Exports: ${result.api.exportedNames.join(', ')}');
     for (final file in result.files) {
       stdout.writeln('  ${result.outputDir}/$file');
@@ -92,10 +95,14 @@ void _printUsage(ArgParser parser, {required IOSink to}) {
     ..writeln('Compile a Dart package into a typed npm package.')
     ..writeln()
     ..writeln('Usage:')
-    ..writeln('  dart_typescript_builder build <path-to-dart-package> '
-        '[--out <dir>] [--engine dart2js|wasm]')
-    ..writeln('      [--module commonjs|esm] [--package-name <npm-name>] '
-        '[--verbose]')
+    ..writeln(
+      '  dart_typescript_builder build <path-to-dart-package> '
+      '[--out <dir>] [--engine dart2js|wasm]',
+    )
+    ..writeln(
+      '      [--module commonjs|esm] [--package-name <npm-name>] '
+      '[--verbose]',
+    )
     ..writeln()
     ..writeln(parser.commands['build']!.usage);
 }

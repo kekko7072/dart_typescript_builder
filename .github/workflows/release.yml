@@ -1,0 +1,56 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install TypeScript
+        run: npm install -g typescript
+
+      - name: Install dependencies
+        run: dart pub get
+
+      - name: Run tests
+        run: dart test
+
+      - name: Check tag matches pubspec version
+        run: |
+          PUBSPEC_VERSION="v$(grep '^version:' pubspec.yaml | awk '{print $2}')"
+          if [ "$PUBSPEC_VERSION" != "${{ github.ref_name }}" ]; then
+            echo "Tag ${{ github.ref_name }} does not match pubspec version $PUBSPEC_VERSION"
+            exit 1
+          fi
+
+      - name: Build example npm packages (release artifacts)
+        run: |
+          dart run bin/dart_typescript_builder.dart build test/fixtures/hello_logic \
+            --out build/hello-logic-js --package-name hello-logic
+          dart run bin/dart_typescript_builder.dart build test/fixtures/hello_logic \
+            --out build/hello-logic-wasm --engine wasm --package-name hello-logic
+          (cd build && tar czf hello-logic-js.tgz hello-logic-js && tar czf hello-logic-wasm.tgz hello-logic-wasm)
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            build/hello-logic-js.tgz
+            build/hello-logic-wasm.tgz

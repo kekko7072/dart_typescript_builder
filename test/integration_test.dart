@@ -86,8 +86,9 @@ void main() {
   "dependencies": { "hello-logic": "file:${built.outputDir}" }
 }
 ''');
-    File(p.join(consumer.path, 'tsconfig.json')).writeAsStringSync(esm
-        ? '''
+    File(p.join(consumer.path, 'tsconfig.json')).writeAsStringSync(
+      esm
+          ? '''
 {
   "compilerOptions": {
     "module": "nodenext",
@@ -99,7 +100,7 @@ void main() {
   "files": ["consumer.ts"]
 }
 '''
-        : '''
+          : '''
 {
   "compilerOptions": {
     "module": "commonjs",
@@ -111,21 +112,19 @@ void main() {
   },
   "files": ["consumer.ts"]
 }
-''');
+''',
+    );
     File(p.join(consumer.path, 'consumer.ts')).writeAsStringSync(_consumerTs);
 
-    _runChecked(
-      'npm',
-      ['install', '--no-audit', '--no-fund'],
-      consumer.path,
-    );
+    _runChecked('npm', ['install', '--no-audit', '--no-fund'], consumer.path);
     _runChecked('tsc', ['-p', '.'], consumer.path);
     final run = _runChecked('node', ['consumer.js'], consumer.path);
     expect(run.stdout, contains('ALL_ASSERTIONS_PASSED'));
 
     // Bad usage must be rejected by the generated declarations.
-    File(p.join(consumer.path, 'consumer.ts'))
-        .writeAsStringSync(_badConsumerTs);
+    File(
+      p.join(consumer.path, 'consumer.ts'),
+    ).writeAsStringSync(_badConsumerTs);
     final bad = Process.runSync(
       'tsc',
       ['-p', '.'],
@@ -135,22 +134,30 @@ void main() {
     expect(
       bad.exitCode,
       isNot(0),
-      reason: 'tsc must reject wrong argument types and readonly writes,'
+      reason:
+          'tsc must reject wrong argument types and readonly writes,'
           ' got:\n${bad.stdout}',
     );
     expect(bad.stdout.toString(), contains('consumer.ts'));
   }
 
   group('dart2js engine (commonjs)', () {
-    test('build -> npm install -> tsc -> node', () async {
-      final built = await build('js-cjs', 'dart2js');
-      expect(built.engineId, 'dart2js');
-      expect(
-        built.api.exportedNames,
-        ['add', 'greet', 'half', 'isEven', 'createCounter'],
-      );
-      npmTscNode('js-cjs', built, esm: false);
-    }, skip: hasNode && hasNpm && hasTsc ? false : 'needs node, npm and tsc');
+    test(
+      'build -> npm install -> tsc -> node',
+      () async {
+        final built = await build('js-cjs', 'dart2js');
+        expect(built.engineId, 'dart2js');
+        expect(built.api.exportedNames, [
+          'add',
+          'greet',
+          'half',
+          'isEven',
+          'createCounter',
+        ]);
+        npmTscNode('js-cjs', built, esm: false);
+      },
+      skip: hasNode && hasNpm && hasTsc ? false : 'needs node, npm and tsc',
+    );
   });
 
   group('dart2js engine (esm)', () {
@@ -179,11 +186,15 @@ console.log("ESM_OK");
   });
 
   group('wasm engine (esm)', () {
-    test('build -> npm install -> tsc -> node', () async {
-      final built = await build('wasm', 'wasm');
-      expect(built.engineId, 'wasm');
-      npmTscNode('wasm', built, esm: true);
-    }, skip: hasNode && hasNpm && hasTsc ? false : 'needs node, npm and tsc');
+    test(
+      'build -> npm install -> tsc -> node',
+      () async {
+        final built = await build('wasm', 'wasm');
+        expect(built.engineId, 'wasm');
+        npmTscNode('wasm', built, esm: true);
+      },
+      skip: hasNode && hasNpm && hasTsc ? false : 'needs node, npm and tsc',
+    );
   });
 }
 
@@ -205,7 +216,8 @@ ProcessResult _runChecked(String executable, List<String> args, String cwd) {
   expect(
     result.exitCode,
     0,
-    reason: '$executable ${args.join(' ')} failed:\n'
+    reason:
+        '$executable ${args.join(' ')} failed:\n'
         '${result.stdout}\n${result.stderr}',
   );
   return result;

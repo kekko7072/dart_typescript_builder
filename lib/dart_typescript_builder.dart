@@ -11,7 +11,8 @@
 /// compiler does the heavy lifting.
 library;
 
-export 'src/api_analyzer.dart' show TargetPackageInfo, analyzePackage, readTargetPackage;
+export 'src/api_analyzer.dart'
+    show TargetPackageInfo, analyzePackage, readTargetPackage;
 export 'src/backend/compiler_backend.dart';
 export 'src/backend/dart2js_backend.dart';
 export 'src/backend/dart2wasm_backend.dart';

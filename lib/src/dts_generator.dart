@@ -33,9 +33,7 @@ String generateDts(ApiModel api) {
     for (final property in classApi.properties) {
       _writeDoc(buffer, property.documentation, indent: '  ');
       final readonly = property.isReadonly ? 'readonly ' : '';
-      buffer.writeln(
-        '  $readonly${property.name}: ${property.type.tsSource};',
-      );
+      buffer.writeln('  $readonly${property.name}: ${property.type.tsSource};');
     }
     for (final method in classApi.methods) {
       _writeDoc(buffer, method.documentation, indent: '  ');
@@ -48,8 +46,10 @@ String generateDts(ApiModel api) {
       ..writeln('}')
       ..writeln()
       ..writeln('/**')
-      ..writeln(' * Creates a `${classApi.name}` '
-          '(Dart constructor `${classApi.name}`).')
+      ..writeln(
+        ' * Creates a `${classApi.name}` '
+        '(Dart constructor `${classApi.name}`).',
+      )
       ..writeln(' *')
       ..writeln(' * The returned value is an opaque handle to a Dart object,')
       ..writeln(' * not a plain JS object.')
@@ -69,7 +69,9 @@ String _parameterList(List<ParameterApi> parameters) => parameters
     .join(', ');
 
 /// Converts a Dart `///` doc comment into a JSDoc block.
-void _writeDoc(StringBuffer buffer, String? documentation, {
+void _writeDoc(
+  StringBuffer buffer,
+  String? documentation, {
   required String indent,
 }) {
   if (documentation == null || documentation.trim().isEmpty) return;

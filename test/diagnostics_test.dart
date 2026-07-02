@@ -14,24 +14,28 @@ void main() {
     return analyzePackage(readTargetPackage(fixturePath(name)));
   }
 
-  test('List parameter -> Unsupported with file:line and Phase 2 hint',
-      () async {
-    await expectLater(
-      analyzeFixture('unsupported_list'),
-      throwsA(
-        isA<UnsupportedApiException>().having(
-          (e) => e.message,
-          'message',
-          allOf(
-            startsWith("Unsupported: type 'List<int>' in parameter 'values' "
-                "of function 'sum' at "),
-            matches(r'unsupported_list\.dart:2'),
-            contains('Phase 2'),
+  test(
+    'List parameter -> Unsupported with file:line and Phase 2 hint',
+    () async {
+      await expectLater(
+        analyzeFixture('unsupported_list'),
+        throwsA(
+          isA<UnsupportedApiException>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              startsWith(
+                "Unsupported: type 'List<int>' in parameter 'values' "
+                "of function 'sum' at ",
+              ),
+              matches(r'unsupported_list\.dart:2'),
+              contains('Phase 2'),
+            ),
           ),
         ),
-      ),
-    );
-  });
+      );
+    },
+  );
 
   test('named parameter -> Unsupported', () async {
     await expectLater(
@@ -41,8 +45,10 @@ void main() {
           (e) => e.message,
           'message',
           allOf(
-            startsWith("Unsupported: named parameter 'width' of function "
-                "'pad' at "),
+            startsWith(
+              "Unsupported: named parameter 'width' of function "
+              "'pad' at ",
+            ),
             matches(r'unsupported_named\.dart:2'),
           ),
         ),
