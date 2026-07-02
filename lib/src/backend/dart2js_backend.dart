@@ -54,7 +54,13 @@ final class Dart2JsBackend implements CompilerBackend {
     final compiled = File(compiledPath)
         .readAsStringSync()
         .replaceAll(RegExp(r'^//# sourceMappingURL=.*$', multiLine: true), '');
-    final runtimeName = '${request.artifactBaseName}.dart.js';
+    // The compiled program is a CommonJS script. Inside an ESM package
+    // ("type": "module") a `.js` extension would make Node treat it as an ES
+    // module and `require()` of it fails — `.cjs` is unambiguous.
+    final runtimeName = switch (request.moduleFormat) {
+      ModuleFormat.commonjs => '${request.artifactBaseName}.dart.js',
+      ModuleFormat.esm => '${request.artifactBaseName}.dart.cjs',
+    };
     File(p.join(request.outputDir, runtimeName)).writeAsStringSync(
       '${node_preamble.getPreamble(minified: true)}\n$compiled',
     );
