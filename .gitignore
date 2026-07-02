@@ -1,0 +1,29 @@
+# Dart / pub
+.dart_tool/
+.packages
+build/
+pubspec.lock
+
+# Generated build artifacts (tool output, integration test scratch)
+dist/
+*.dart.js
+*.dart.js.map
+*.dart.js.deps
+*.wasm
+*.mjs.map
+*.unopt.wasm
+*.support.js
+
+# Fixture packages must keep their sources, but not their resolution state
+test/fixtures/**/.dart_tool/
+test/fixtures/**/pubspec.lock
+
+# Node scratch from integration tests
+**/node_modules/
+test/.tmp/
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store

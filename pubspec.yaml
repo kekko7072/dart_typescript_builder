@@ -1,0 +1,26 @@
+name: dart_typescript_builder
+description: >-
+  Compile a Dart package into a typed npm package: JS (dart2js) or WASM
+  (dart2wasm) output, dart:js_interop bindings, and generated TypeScript
+  declarations, so the same Dart logic runs in Flutter and on a TypeScript
+  backend.
+version: 0.1.0
+homepage: https://vezz.io
+repository: https://github.com/kekko7072/dart_typescript_builder
+
+environment:
+  sdk: ^3.12.0
+
+executables:
+  dart_typescript_builder:
+
+dependencies:
+  analyzer: ^8.0.0
+  args: ^2.6.0
+  node_preamble: ^2.0.2
+  path: ^1.9.0
+  yaml: ^3.1.3
+
+dev_dependencies:
+  lints: ^6.0.0
+  test: ^1.25.0

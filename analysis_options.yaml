@@ -1,0 +1,7 @@
+include: package:lints/recommended.yaml
+
+analyzer:
+  exclude:
+    - test/fixtures/**
+    - test/goldens/**
+    - test/.tmp/**
