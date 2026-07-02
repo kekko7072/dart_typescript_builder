@@ -12,16 +12,28 @@ String generateDts(ApiModel api) {
     ..writeln('// TypeScript declarations for the compiled Dart package')
     ..writeln('// `${api.dartPackageName}` (${api.libraryUri}).')
     ..writeln('//')
-    ..writeln('// Numeric caveat: Dart `int`, `double` and `num` all cross')
-    ..writeln('// the boundary as JS `number` (IEEE-754 double). Integer')
-    ..writeln('// values beyond 2^53 lose precision.');
+    ..writeln('// Boundary semantics:')
+    ..writeln('// - Dart `int`, `double` and `num` all cross as JS `number`')
+    ..writeln('//   (IEEE-754 double); integers beyond 2^53 lose precision.')
+    ..writeln('// - Dart `DateTime` crosses as JS `Date` via epoch')
+    ..writeln('//   milliseconds: microseconds are truncated and the Dart')
+    ..writeln('//   local/UTC flag is not preserved (arrives in Dart as UTC).')
+    ..writeln('// - `unknown` marks Dart `dynamic`/`Object`: only')
+    ..writeln('//   JSON-compatible values survive the boundary.')
+    ..writeln('// - Class instances are opaque handles over Dart objects;')
+    ..writeln('//   only handles created by this package can be passed back.');
+
+  for (final constant in api.constants) {
+    buffer.writeln();
+    _writeDoc(buffer, constant.documentation, indent: '');
+    buffer.writeln('export const ${constant.name}: ${constant.type.tsSource};');
+  }
 
   for (final function in api.functions) {
     buffer.writeln();
     _writeDoc(buffer, function.documentation, indent: '');
     buffer.writeln(
-      'export function ${function.name}'
-      '(${_parameterList(function.parameters)}): '
+      'export function ${function.name}(${_parameterList(function)}): '
       '${function.returnType.tsSource};',
     );
   }
@@ -38,35 +50,82 @@ String generateDts(ApiModel api) {
     for (final method in classApi.methods) {
       _writeDoc(buffer, method.documentation, indent: '  ');
       buffer.writeln(
-        '  ${method.name}(${_parameterList(method.parameters)}): '
+        '  ${method.name}(${_parameterList(method)}): '
         '${method.returnType.tsSource};',
       );
     }
-    buffer
-      ..writeln('}')
-      ..writeln()
-      ..writeln('/**')
-      ..writeln(
-        ' * Creates a `${classApi.name}` '
-        '(Dart constructor `${classApi.name}`).',
-      )
-      ..writeln(' *')
-      ..writeln(' * The returned value is an opaque handle to a Dart object,')
-      ..writeln(' * not a plain JS object.')
-      ..writeln(' */')
-      ..writeln(
-        'export function ${classApi.factoryName}'
-        '(${_parameterList(classApi.constructorParameters)}): '
-        '${classApi.name};',
+    buffer.writeln('}');
+
+    if (!classApi.isAbstract) {
+      final ctor = FunctionApi(
+        name: classApi.factoryName,
+        parameters: classApi.constructorParameters,
+        returnType: ClassRefType(classApi.name),
       );
+      buffer
+        ..writeln()
+        ..writeln('/**')
+        ..writeln(
+          ' * Creates a `${classApi.name}` '
+          '(Dart constructor `${classApi.name}`).',
+        )
+        ..writeln(' *')
+        ..writeln(' * The returned value is an opaque handle to a Dart object,')
+        ..writeln(' * not a plain JS object.')
+        ..writeln(' */')
+        ..writeln(
+          'export function ${classApi.factoryName}'
+          '(${_parameterList(ctor)}): ${classApi.name};',
+        );
+    }
+
+    if (classApi.hasStaticsNamespace) {
+      buffer
+        ..writeln()
+        ..writeln('/**')
+        ..writeln(
+          ' * Statics of the Dart class `${classApi.name}` '
+          '(static methods, named',
+        )
+        ..writeln(' * constructors and factories, static constants).')
+        ..writeln(' */')
+        ..writeln('export const ${classApi.name}: {');
+      for (final constant in classApi.staticConstants) {
+        _writeDoc(buffer, constant.documentation, indent: '  ');
+        buffer.writeln('  readonly ${constant.name}: ${constant.type.tsSource};');
+      }
+      for (final callable in classApi.staticCallables) {
+        _writeDoc(buffer, callable.documentation, indent: '  ');
+        buffer.writeln(
+          '  ${callable.name}(${_parameterList(callable)}): '
+          '${callable.returnType.tsSource};',
+        );
+      }
+      buffer.writeln('};');
+    }
   }
 
   return buffer.toString();
 }
 
-String _parameterList(List<ParameterApi> parameters) => parameters
-    .map((parameter) => '${parameter.name}: ${parameter.type.tsSource}')
-    .join(', ');
+String _parameterList(FunctionApi function) {
+  final parts = <String>[
+    for (final p in function.requiredPositional)
+      '${p.name}: ${p.type.tsSource}',
+    for (final p in function.optionalPositional)
+      '${p.name}?: ${p.type.tsSource}',
+  ];
+  if (function.hasOptionsObject) {
+    final members = function.named
+        .map(
+          (p) => '${p.name}${p.isRequired ? '' : '?'}: ${p.type.tsSource}',
+        )
+        .join('; ');
+    final optional = function.optionsObjectIsOptional ? '?' : '';
+    parts.add('${function.optionsParameterName}$optional: { $members }');
+  }
+  return parts.join(', ');
+}
 
 /// Converts a Dart `///` doc comment into a JSDoc block.
 void _writeDoc(
