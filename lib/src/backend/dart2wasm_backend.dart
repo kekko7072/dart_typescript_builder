@@ -123,14 +123,10 @@ final class Dart2WasmBackend implements CompilerBackend {
         'new URL("./$wasmName", import.meta.url));',
       )
       ..writeln('const __dtb\$app = await __dtb\$compile(__dtb\$bytes);')
-      ..writeln(
-        'const __dtb\$instantiated = await __dtb\$app.instantiate({});',
-      )
+      ..writeln('const __dtb\$instantiated = await __dtb\$app.instantiate({});')
       ..writeln('__dtb\$instantiated.invokeMain();')
       ..writeln()
-      ..writeln(
-        'const __dtb\$exports = globalThis.${request.globalExportKey};',
-      )
+      ..writeln('const __dtb\$exports = globalThis.${request.globalExportKey};')
       ..writeln('if (!__dtb\$exports) {')
       ..writeln(
         '  throw new Error("${request.api.dartPackageName}: the Dart '

@@ -60,10 +60,13 @@ the Dart Firebase SDKs treat `toMap()` documents.
 | `DateTime`               | `Date` or Firestore `Timestamp` (`--datetime`)|
 | `dynamic`, `Object`      | `unknown` (deep-converted JSON-ish snapshot)  |
 | named parameters         | trailing options object                       |
+| `enum`                   | string-literal union (values cross by name)   |
+| function types           | `(p0: T) => R` — callbacks in both directions |
+| `Stream<T>`              | `AsyncIterable<T>` (`for await`, early-`break` cancels) |
 | class                    | interface + `createX(...)` factory; instances are opaque, identity-cached handles |
+| `extends`/`implements`   | `interface X extends Y`; wrappers dispatch to the most-derived class |
 | static members, named constructors | callables/live getters on an exported `X` namespace object |
 | `abstract class`         | TypeScript interface (no factory)             |
-| `Stream<T>` in abstract contracts | type-only interface with `AsyncIterable<T>` |
 | top-level `const`/`final`| `export const`                                |
 
 ⚠️ `int`, `double` and `num` all become JS `number` (IEEE-754 double):
@@ -71,9 +74,9 @@ integers beyond 2⁵³ lose precision. `DateTime` arrives in Dart as UTC (the
 local/UTC flag doesn't survive). `unknown` payloads are snapshots — send
 mutations back via return values.
 
-Anything else — enums, inheritance, callbacks, runtime `Stream` marshalling —
-fails loudly with `Unsupported: <construct> at <file>:<line>` instead of
-emitting broken output.
+Anything else — generic classes, records, `FutureOr`, callbacks with named
+parameters — fails loudly with `Unsupported: <construct> at <file>:<line>`
+instead of emitting broken output.
 
 Boundary validation failures (wrong types, missing required options, foreign
 handles) throw real JS `TypeError`s with readable messages on **both**
@@ -98,8 +101,10 @@ final result = await buildNpmPackage(BuildOptions(
 2. ✅ Collections, `Future`, nullable types, named parameters, `DateTime`
    (JS `Date` / Firestore `Timestamp`), `dynamic` passthrough, class
    references, statics, abstract contracts
-3. Enums, class hierarchies, callbacks
-4. Runtime `Stream` → `AsyncIterable`, nested generics
+3. ✅ Enums, class hierarchies, callbacks
+4. ✅ Runtime `Stream` ↔ `AsyncIterable`, nested generics
+
+Next: generic classes, records, TS-implements-Dart-interface direction.
 
 ---
 

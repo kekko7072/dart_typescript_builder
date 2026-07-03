@@ -1,4 +1,4 @@
-name: unsupported_callback
+name: unsupported_extends_private
 version: 0.1.0
 environment:
   sdk: ^3.5.0

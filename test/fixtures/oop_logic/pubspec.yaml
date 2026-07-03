@@ -1,4 +1,4 @@
-name: unsupported_stream
+name: oop_logic
 version: 0.1.0
 environment:
   sdk: ^3.5.0

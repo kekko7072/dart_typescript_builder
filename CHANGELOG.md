@@ -1,3 +1,28 @@
+## 0.3.0
+
+Phase 3 + Phase 4. Both engines.
+
+- Enums: exported as string-literal unions (`type Signal = "red" | "amber" |
+  "green"`); values cross by name with validated round trips; enhanced-enum
+  members stay Dart-side.
+- Class hierarchies: `extends`/`implements` between exported classes become
+  TypeScript `interface ... extends`; wrappers dispatch polymorphically to
+  the most-derived exported class; mixin members are folded into the class
+  interface; abstract classes with a public unnamed factory constructor get
+  a `createX` factory.
+- Callbacks: function-typed parameters and returns cross as JS functions in
+  both directions (sync and async/Promise-returning), including class
+  handles inside callback signatures.
+- Runtime `Stream<T>` <-> `AsyncIterable<T>`: `for await` over Dart streams
+  (early `break` cancels the subscription), JS async iterables consumed as
+  Dart streams, streams of class handles, and Stream-bearing abstract
+  contracts now have runtime wrappers (the type-only workaround is gone).
+- When the npm package is generated inside the target package, the target's
+  `analysis_options.yaml` automatically gains the exclusion (created with
+  `package:lints/recommended.yaml` when absent).
+- CI: pinned Dart SDK (deterministic `dart format`), action majors bumped
+  off the deprecated Node 20 runtime.
+
 ## 0.2.0
 
 Phase 2 + class references + configurable DateTime mapping. Both engines.
@@ -27,6 +52,27 @@ Phase 2 + class references + configurable DateTime mapping. Both engines.
   escaping dart2wasm is a message-less `WebAssembly.Exception`).
 - CommonJS entry emits static named-export hints so ESM consumers can
   name-import the dart2js build.
+
+Hardening from an adversarial review pass (every finding reproduced before
+fixing):
+
+- A method named `then` is rejected: the wrapper handle would be a JS
+  *thenable* and Promise assimilation would hijack every `Future<ThatClass>`.
+- `$` in exported/member names no longer corrupts the generated facade;
+  hostile doc comments (`**/*.dart`, block comments) can no longer break the
+  generated `.d.ts`; classes named like generated helpers (`Foo`+`CacheFoo`)
+  no longer collide; entry-glue locals are collision-proof (`__dtb$` prefix).
+- Options lookups use `Object.hasOwn` (an option named `toString` works);
+  map keys named `__proto__` are stored as data properties instead of
+  mutating the prototype; typed `int`/`num` conversions guard the 2^53 safe
+  range; cyclic `dynamic` data fails loudly instead of overflowing the stack.
+- Strict-mode reserved words (`let`, `yield`, ...) are rejected as export
+  names; reserved-word positional parameter names are relabelled in the
+  `.d.ts`; getter/setter type mismatches, static setters, nullable map keys
+  and classes shadowing `Date`/`Timestamp` are rejected with clear
+  diagnostics; abstract classes with a public unnamed factory constructor
+  now get their `createX` factory; npm versions strip Dart build metadata
+  instead of becoming prereleases.
 
 ## 0.1.0
 

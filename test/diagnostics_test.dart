@@ -14,40 +14,48 @@ void main() {
     return analyzePackage(readTargetPackage(fixturePath(name)));
   }
 
-  test('function-typed parameter -> Unsupported with file:line', () async {
+  test('callback with named parameters -> Unsupported', () async {
     await expectLater(
-      analyzeFixture('unsupported_callback'),
+      analyzeFixture('unsupported_callback_named'),
       throwsA(
         isA<UnsupportedApiException>().having(
           (e) => e.message,
           'message',
           allOf(
-            startsWith(
-              "Unsupported: function type 'int Function(int)' in parameter "
-              "'transform' of function 'apply' at ",
-            ),
-            matches(r'unsupported_callback\.dart:2'),
-            contains('callback marshalling'),
+            contains('callbacks support required positional parameters only'),
+            matches(r'unsupported_callback_named\.dart:2'),
           ),
         ),
       ),
     );
   });
 
-  test('Stream outside an abstract contract -> Unsupported', () async {
+  test('generic class -> Unsupported', () async {
     await expectLater(
-      analyzeFixture('unsupported_stream'),
+      analyzeFixture('unsupported_generic'),
       throwsA(
         isA<UnsupportedApiException>().having(
           (e) => e.message,
           'message',
           allOf(
-            startsWith(
-              "Unsupported: type 'Stream<int>' in return type of function "
-              "'ticks' at ",
-            ),
-            matches(r'unsupported_stream\.dart:2'),
-            contains('Phase 4'),
+            startsWith("Unsupported: generic class 'Box' at "),
+            matches(r'unsupported_generic\.dart:2'),
+          ),
+        ),
+      ),
+    );
+  });
+
+  test('extending an unexported class -> Unsupported', () async {
+    await expectLater(
+      analyzeFixture('unsupported_extends_private'),
+      throwsA(
+        isA<UnsupportedApiException>().having(
+          (e) => e.message,
+          'message',
+          allOf(
+            contains("class 'Child' extends '_Base'"),
+            contains('not exported'),
           ),
         ),
       ),
@@ -74,18 +82,82 @@ void main() {
     );
   });
 
-  test('enum -> Unsupported', () async {
+  test('method named `then` -> Unsupported (thenable hijack)', () async {
     await expectLater(
-      analyzeFixture('unsupported_enum'),
+      analyzeFixture('unsupported_then'),
       throwsA(
         isA<UnsupportedApiException>().having(
           (e) => e.message,
           'message',
           allOf(
-            startsWith("Unsupported: enum 'Color' at "),
-            matches(r'unsupported_enum\.dart:2'),
-            contains('Phase 3'),
+            startsWith("Unsupported: member 'Job.then'"),
+            matches(r'unsupported_then\.dart:'),
           ),
+        ),
+      ),
+    );
+  });
+
+  test('nullable map key -> Unsupported', () async {
+    await expectLater(
+      analyzeFixture('unsupported_nullable_map_key'),
+      throwsA(
+        isA<UnsupportedApiException>().having(
+          (e) => e.message,
+          'message',
+          contains("map key type 'String?'"),
+        ),
+      ),
+    );
+  });
+
+  test('getter/setter type mismatch -> Unsupported', () async {
+    await expectLater(
+      analyzeFixture('unsupported_accessor_mismatch'),
+      throwsA(
+        isA<UnsupportedApiException>().having(
+          (e) => e.message,
+          'message',
+          contains("getter/setter type mismatch for 'Box.value'"),
+        ),
+      ),
+    );
+  });
+
+  test('static setter -> Unsupported', () async {
+    await expectLater(
+      analyzeFixture('unsupported_static_setter'),
+      throwsA(
+        isA<UnsupportedApiException>().having(
+          (e) => e.message,
+          'message',
+          contains("static setter 'Config.mode'"),
+        ),
+      ),
+    );
+  });
+
+  test('strict-mode reserved word as function name -> Unsupported', () async {
+    await expectLater(
+      analyzeFixture('unsupported_strict_reserved'),
+      throwsA(
+        isA<UnsupportedApiException>().having(
+          (e) => e.message,
+          'message',
+          contains("function 'let' — the name is a reserved word"),
+        ),
+      ),
+    );
+  });
+
+  test('class named Date alongside DateTime usage -> rejection', () async {
+    await expectLater(
+      analyzeFixture('unsupported_date_class'),
+      throwsA(
+        isA<BuildException>().having(
+          (e) => e.message,
+          'message',
+          contains("class is named 'Date'"),
         ),
       ),
     );

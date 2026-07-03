@@ -6,6 +6,7 @@ library;
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
+import 'package:yaml/yaml.dart';
 
 import 'api_analyzer.dart';
 import 'backend/compiler_backend.dart';
@@ -22,6 +23,7 @@ final class BuildOptions {
     this.moduleFormat,
     this.npmPackageName,
     this.dateTimeMode = DateTimeMode.jsDate,
+    this.runNpmInstall = true,
     this.verbose = false,
   });
 
@@ -45,6 +47,13 @@ final class BuildOptions {
   /// `Timestamp` from firebase-admin (for TypeScript backends on Firebase).
   final DateTimeMode dateTimeMode;
 
+  /// Run `npm install` in the output directory after packaging, so the
+  /// folder is a complete, immediately consumable npm project: the first run
+  /// initializes `package-lock.json`, and peer dependencies declared by the
+  /// build (firebase-admin in firestore mode) are installed too (npm >= 7
+  /// auto-installs peers — requires network when peers are present).
+  final bool runNpmInstall;
+
   final bool verbose;
 }
 
@@ -55,6 +64,7 @@ final class BuildResult {
     required this.files,
     required this.api,
     required this.engineId,
+    this.npmInstalled = false,
   });
 
   final String outputDir;
@@ -65,6 +75,9 @@ final class BuildResult {
 
   final ApiModel api;
   final String engineId;
+
+  /// Whether `npm install` ran in the output directory.
+  final bool npmInstalled;
 }
 
 /// Runs the full pipeline and returns what was produced.
@@ -131,6 +144,10 @@ Future<BuildResult> buildNpmPackage(BuildOptions options) async {
     backendOutput: backendOutput,
     engineId: backend.id,
   );
+  ensureAnalyzerExclusion(target, outputDir.path);
+  final npmInstalled =
+      options.runNpmInstall &&
+      _npmInstall(outputDir.path, verbose: options.verbose);
 
   return BuildResult(
     outputDir: packaged.outputDir,
@@ -138,7 +155,46 @@ Future<BuildResult> buildNpmPackage(BuildOptions options) async {
     files: packaged.files,
     api: api,
     engineId: backend.id,
+    npmInstalled: npmInstalled,
   );
+}
+
+/// Completes the output as an npm project: `npm install` creates
+/// `package-lock.json` (first run = init) and `node_modules`, including
+/// declared peer dependencies such as firebase-admin (auto-installed by
+/// npm >= 7).
+bool _npmInstall(String outputDir, {required bool verbose}) {
+  final ProcessResult probe;
+  try {
+    probe = Process.runSync('npm', ['--version'], runInShell: true);
+  } on ProcessException {
+    stderr.writeln(
+      'warning: npm not found — skipped `npm install` in $outputDir.',
+    );
+    return false;
+  }
+  if (probe.exitCode != 0) {
+    stderr.writeln(
+      'warning: npm not usable — skipped `npm install` in $outputDir.',
+    );
+    return false;
+  }
+  if (verbose) {
+    stderr.writeln('[npm] install in $outputDir');
+  }
+  final result = Process.runSync(
+    'npm',
+    ['install', '--no-audit', '--no-fund', '--legacy-peer-deps'],
+    workingDirectory: outputDir,
+    runInShell: true,
+  );
+  if (result.exitCode != 0) {
+    throw BuildException(
+      'npm install failed in $outputDir '
+      '(exit ${result.exitCode}):\n${result.stdout}\n${result.stderr}',
+    );
+  }
+  return true;
 }
 
 void _ensureResolved(TargetPackageInfo target, {required bool verbose}) {
@@ -159,6 +215,108 @@ void _ensureResolved(TargetPackageInfo target, {required bool verbose}) {
       '(exit ${result.exitCode}):\n${result.stderr}',
     );
   }
+}
+
+/// When the npm package is generated INSIDE the target package (e.g.
+/// `<target>/typescript/`), keep that directory out of the target's own
+/// `dart analyze`: it holds no Dart code (and may grow a node_modules).
+///
+/// Creates `analysis_options.yaml` (including `package:lints/recommended.yaml`
+/// when the target dev-depends on `lints`) or minimally edits the existing
+/// one; every edit is re-parsed and verified before being written, falling
+/// back to a warning if the file's shape is unusual.
+void ensureAnalyzerExclusion(TargetPackageInfo target, String outputDir) {
+  final relative = p.relative(outputDir, from: target.rootPath);
+  if (relative.startsWith('..') || p.isAbsolute(relative)) return;
+  final topDir = p.split(relative).first;
+  final pattern = '$topDir/**';
+  final file = File(p.join(target.rootPath, 'analysis_options.yaml'));
+
+  if (!file.existsSync()) {
+    final pubspec = File(
+      p.join(target.rootPath, 'pubspec.yaml'),
+    ).readAsStringSync();
+    final hasLints = RegExp(
+      r'^\s+lints\s*:',
+      multiLine: true,
+    ).hasMatch(pubspec);
+    file.writeAsStringSync(
+      [
+        if (hasLints) ...['include: package:lints/recommended.yaml', ''],
+        '# The `$topDir/` subdirectory is the generated npm package (the',
+        '# TypeScript counterpart of this Dart core); it holds no Dart code,',
+        '# so keep it out of dart analyze. (Added by dart_typescript_builder.)',
+        'analyzer:',
+        '  exclude:',
+        '    - $pattern',
+        '',
+      ].join('\n'),
+    );
+    return;
+  }
+
+  final source = file.readAsStringSync();
+  if (_analyzerExcludes(source, pattern)) return;
+
+  final Object? parsed;
+  try {
+    parsed = loadYaml(source);
+  } catch (_) {
+    _warnAnalyzerExclusion(file, pattern);
+    return;
+  }
+
+  final String updated;
+  final analyzerSection = parsed is YamlMap ? parsed['analyzer'] : null;
+  if (parsed is! YamlMap || analyzerSection == null) {
+    updated =
+        '${source.trimRight()}\n\n'
+        '# The `$topDir/` subdirectory is the generated npm package; it '
+        'holds no\n'
+        '# Dart code. (Added by dart_typescript_builder.)\n'
+        'analyzer:\n'
+        '  exclude:\n'
+        '    - $pattern\n';
+  } else if (analyzerSection is YamlMap && analyzerSection['exclude'] != null) {
+    // Append one entry right below the existing `exclude:` line.
+    updated = source.replaceFirstMapped(
+      RegExp(r'^([ \t]*)exclude[ \t]*:[ \t]*$', multiLine: true),
+      (m) => '${m[0]}\n${m[1]}  - $pattern',
+    );
+  } else {
+    // `analyzer:` exists without an exclude list.
+    updated = source.replaceFirst(
+      RegExp(r'^analyzer[ \t]*:[ \t]*$', multiLine: true),
+      'analyzer:\n  exclude:\n    - $pattern',
+    );
+  }
+
+  if (_analyzerExcludes(updated, pattern)) {
+    file.writeAsStringSync(updated);
+  } else {
+    _warnAnalyzerExclusion(file, pattern);
+  }
+}
+
+bool _analyzerExcludes(String source, String pattern) {
+  try {
+    final parsed = loadYaml(source);
+    if (parsed is! YamlMap) return false;
+    final analyzer = parsed['analyzer'];
+    if (analyzer is! YamlMap) return false;
+    final exclude = analyzer['exclude'];
+    return exclude is YamlList && exclude.contains(pattern);
+  } catch (_) {
+    return false;
+  }
+}
+
+void _warnAnalyzerExclusion(File file, String pattern) {
+  stderr.writeln(
+    'warning: could not update ${file.path} automatically — add '
+    "'$pattern' to analyzer.exclude yourself so the generated npm package "
+    'stays out of dart analyze.',
+  );
 }
 
 void _validateNpmName(String name) {

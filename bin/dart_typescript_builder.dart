@@ -49,6 +49,13 @@ void main(List<String> arguments) async {
               'How DateTime crosses the boundary: JS Date, or Firestore '
               'Timestamp from firebase-admin (for Firebase backends).',
         )
+        ..addFlag(
+          'npm-install',
+          defaultsTo: true,
+          help:
+              'Run `npm install` in the output directory after packaging '
+              '(first run initializes package-lock.json).',
+        )
         ..addFlag('verbose', abbr: 'v', negatable: false),
     );
 
@@ -84,6 +91,7 @@ void main(List<String> arguments) async {
             : ModuleFormat.parse(command['module'] as String),
         npmPackageName: command['package-name'] as String?,
         dateTimeMode: DateTimeMode.parse(command['datetime'] as String),
+        runNpmInstall: command['npm-install'] as bool,
         verbose: command['verbose'] as bool,
       ),
     );
@@ -95,6 +103,9 @@ void main(List<String> arguments) async {
       ..writeln('Exports: ${result.api.exportedNames.join(', ')}');
     for (final file in result.files) {
       stdout.writeln('  ${result.outputDir}/$file');
+    }
+    if (result.npmInstalled) {
+      stdout.writeln('npm install: done (package-lock.json + node_modules)');
     }
   } on UnsupportedApiException catch (e) {
     stderr.writeln(e.message);

@@ -172,6 +172,166 @@ assertEqual(note.toMap().createdAt instanceof Timestamp, true, "dynamic map");
 console.log("ALL_ASSERTIONS_PASSED");
 ''';
 
+// ---------------------------------------------------------------------------
+// edge_logic (hostile names, adversarial-review regressions)
+// ---------------------------------------------------------------------------
+
+const _edgeConsumerTs = '''
+import {
+  looksLikeDart, blockDocumented, count, addOne, cyclic,
+  createFoo, createCacheFoo, createShape, Foo, Shape,
+} from "edge-logic";
+
+function assertEqual(actual: unknown, expected: unknown, label: string): void {
+  if (actual !== expected) {
+    throw new Error(label + ": expected " + expected + ", got " + actual);
+  }
+}
+
+const f: Foo = createFoo(2);
+assertEqual(f.foo\$wrapper(), "dollar-ok:2", "dollar method");
+assertEqual(f.describe({ toString: 40 }), 42, "toString option (hasOwn)");
+const pm = f.protoMap();
+assertEqual(pm["ok"], 2, "proto map data");
+assertEqual(Object.getPrototypeOf(pm) === Object.prototype, true,
+  "prototype not polluted");
+const s: Shape = createShape(5);
+assertEqual(s.describe(), "polygon(5)", "abstract factory ctor");
+assertEqual(createCacheFoo(7).y, 7, "CacheFoo vs Foo name collision");
+assertEqual(count(3), 6, "reserved-word param");
+assertEqual(blockDocumented(1), 2, "block doc");
+assertEqual(looksLikeDart("a.dart"), true, "glob doc");
+try { cyclic(); throw new Error("cyclic did not throw"); }
+catch (e) {
+  if (!/cyclic/.test((e as Error).message)) throw e;
+}
+try { addOne(9007199254740994); throw new Error("addOne did not throw"); }
+catch (e) {
+  if (!/safe integer/.test((e as Error).message)) throw e;
+}
+console.log("ALL_ASSERTIONS_PASSED");
+''';
+
+// ---------------------------------------------------------------------------
+// oop_logic (Phase 3: enums + hierarchies)
+// ---------------------------------------------------------------------------
+
+const _oopConsumerTs = '''
+import {
+  Signal, Priority, nextSignal, parseSignal, prioritize,
+  adopt, createDog, createPuppy, createKennel,
+  Animal, Dog, Puppy, Kennel,
+} from "oop-logic";
+
+function assertEqual(actual: unknown, expected: unknown, label: string): void {
+  if (actual !== expected) {
+    throw new Error(label + ": expected " + expected + ", got " + actual);
+  }
+}
+
+const next: Signal = nextSignal("red");
+assertEqual(next, "green", "enum round trip");
+assertEqual(parseSignal(null), null, "nullable enum");
+const priorities: Priority[] = prioritize({ a: true, b: false });
+assertEqual(priorities.join(","), "high,low", "enums in collections");
+
+const puppy: Puppy = createPuppy("Bit");
+const asAnimal: Animal = puppy; // interface extends compiles
+assertEqual(asAnimal.speak(), "yip", "override through supertype");
+assertEqual(puppy.fetch(), "Bit fetches!", "inherited Dog member");
+puppy.tag("cute");
+assertEqual(puppy.tags.join(","), "cute", "mixin member");
+
+const dog: Dog = createDog("Fido");
+const kennel: Kennel = createKennel();
+kennel.admit(puppy);
+kennel.admit(dog);
+assertEqual(kennel.chorus().join(","), "yip,woof", "polymorphic chorus");
+assertEqual(kennel.residents.length, 2, "supertype collection");
+
+const adopted = adopt("puppy", "Zip") as Puppy;
+assertEqual(adopted.speak(), "yip", "runtime dispatch to most-derived");
+assertEqual(adopted.fetch(), "Zip fetches!", "dispatched wrapper has Dog API");
+
+console.log("ALL_ASSERTIONS_PASSED");
+''';
+
+// Must NOT type-check: invalid enum literal, readonly write.
+const _oopBadConsumerTs = '''
+import { nextSignal, createPuppy } from "oop-logic";
+
+nextSignal("blue");
+const p = createPuppy("x");
+p.name = "renamed";
+''';
+
+// ---------------------------------------------------------------------------
+// async_logic (Phase 3/4: callbacks + runtime streams)
+// ---------------------------------------------------------------------------
+
+const _asyncConsumerTs = '''
+import {
+  applyTwice, greetVia, makeAdder, describeVia,
+  counter, total, issueTickets, feedOf,
+  createTicket, Ticket, TicketFeed,
+} from "async-logic";
+
+function assertEqual(actual: unknown, expected: unknown, label: string): void {
+  if (actual !== expected) {
+    throw new Error(label + ": expected " + expected + ", got " + actual);
+  }
+}
+
+async function main(): Promise<void> {
+  assertEqual(applyTwice(5, (x: number) => x * 3), 45, "sync callback");
+  assertEqual(
+    await greetVia(async (name: string) => "Ciao " + name + "!"),
+    "Ciao Francesco!",
+    "async callback",
+  );
+  const add7: (value: number) => number = makeAdder(7);
+  assertEqual(add7(35), 42, "returned function");
+
+  const ticket: Ticket = createTicket("amperry");
+  assertEqual(
+    describeVia(ticket, (t: Ticket) => t.describe().toUpperCase()),
+    "TICKET FOR AMPERRY",
+    "handle in callback",
+  );
+
+  const seen: number[] = [];
+  for await (const value of counter(4)) seen.push(value);
+  assertEqual(seen.join(","), "1,2,3,4", "dart stream for-await");
+
+  const partial: number[] = [];
+  for await (const value of counter(100)) {
+    partial.push(value);
+    if (partial.length === 2) break;
+  }
+  assertEqual(partial.join(","), "1,2", "early break cancels");
+
+  async function* gen(): AsyncIterable<number> {
+    yield 20;
+    yield 22;
+  }
+  assertEqual(await total(gen()), 42, "js async iterable to dart");
+
+  const owners: string[] = [];
+  for await (const t of issueTickets(["a", "b"])) owners.push(t.owner);
+  assertEqual(owners.join(","), "a,b", "stream of handles");
+
+  const feed: TicketFeed = feedOf(["x", "y", "z"]);
+  let count = 0;
+  for await (const t of feed.watch()) count += t.owner.length;
+  assertEqual(count, 3, "abstract stream contract");
+  await feed.close();
+
+  console.log("ALL_ASSERTIONS_PASSED");
+}
+
+void main();
+''';
+
 void main() {
   final hasNode = _canRun('node', ['--version']);
   final hasNpm = _canRun('npm', ['--version']);
@@ -193,6 +353,7 @@ void main() {
         engine: engine,
         npmPackageName: fixture.replaceAll('_', '-'),
         dateTimeMode: dateTimeMode,
+        runNpmInstall: false,
       ),
     );
     for (final file in result.files) {
@@ -240,6 +401,7 @@ void main() {
           engine: 'dart2js',
           moduleFormat: ModuleFormat.esm,
           npmPackageName: 'hello-logic',
+          runNpmInstall: false,
         ),
       );
       final probe = p.join(dist.path, 'smoke.mjs');
@@ -300,6 +462,53 @@ console.log("ESM_OK");
           consumerTs: _boundaryConsumerTs,
           badConsumerTs: _boundaryBadConsumerTs,
         );
+      },
+      skip: toolchain ? false : 'needs node, npm and tsc',
+    );
+  });
+
+  for (final engine in ['dart2js', 'wasm']) {
+    final esm = engine == 'wasm';
+    group('oop_logic / $engine', () {
+      test(
+        'enums + hierarchies through npm+tsc+node',
+        () async {
+          final built = await build('oop-$engine', 'oop_logic', engine);
+          _npmTscNode(
+            'oop-$engine',
+            built,
+            esm: esm,
+            consumerTs: _oopConsumerTs,
+            badConsumerTs: _oopBadConsumerTs,
+          );
+        },
+        skip: toolchain ? false : 'needs node, npm and tsc',
+      );
+    });
+
+    group('async_logic / $engine', () {
+      test(
+        'callbacks + runtime streams through npm+tsc+node',
+        () async {
+          final built = await build('async-$engine', 'async_logic', engine);
+          _npmTscNode(
+            'async-$engine',
+            built,
+            esm: esm,
+            consumerTs: _asyncConsumerTs,
+          );
+        },
+        skip: toolchain ? false : 'needs node, npm and tsc',
+      );
+    });
+  }
+
+  group('edge_logic / dart2js (commonjs)', () {
+    test(
+      'hostile names and review regressions survive npm+tsc+node',
+      () async {
+        final built = await build('edge-cjs', 'edge_logic', 'dart2js');
+        _npmTscNode('edge-cjs', built, esm: false, consumerTs: _edgeConsumerTs);
       },
       skip: toolchain ? false : 'needs node, npm and tsc',
     );

@@ -35,6 +35,15 @@ String generateDts(ApiModel api) {
       ..writeln('import type { Timestamp } from "firebase-admin/firestore";');
   }
 
+  for (final enumApi in api.enums) {
+    buffer.writeln();
+    _writeDoc(buffer, enumApi.documentation, indent: '');
+    buffer
+      ..writeln('// Dart enum `${enumApi.name}`: values cross by name;')
+      ..writeln('// enhanced-enum members stay Dart-side.')
+      ..writeln('export type ${enumApi.name} = ${enumApi.tsUnion};');
+  }
+
   for (final constant in api.constants) {
     buffer.writeln();
     _writeDoc(buffer, constant.documentation, indent: '');
@@ -53,7 +62,10 @@ String generateDts(ApiModel api) {
   for (final classApi in api.classes) {
     buffer.writeln();
     _writeDoc(buffer, classApi.documentation, indent: '');
-    buffer.writeln('export interface ${classApi.name} {');
+    final extendsClause = classApi.extendsNames.isEmpty
+        ? ''
+        : ' extends ${classApi.extendsNames.join(', ')}';
+    buffer.writeln('export interface ${classApi.name}$extendsClause {');
     for (final property in classApi.properties) {
       _writeDoc(buffer, property.documentation, indent: '  ');
       final readonly = property.isReadonly ? 'readonly ' : '';
@@ -127,13 +139,54 @@ String generateDts(ApiModel api) {
 /// they can be safely renamed; named options are object members, where
 /// reserved words are legal.
 const _tsReservedParamNames = {
-  'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger',
-  'default', 'delete', 'do', 'else', 'enum', 'export', 'extends', 'false',
-  'finally', 'for', 'function', 'if', 'import', 'in', 'instanceof', 'new',
-  'null', 'return', 'super', 'switch', 'this', 'throw', 'true', 'try',
-  'typeof', 'var', 'void', 'while', 'with', 'let', 'static', 'yield',
-  'await', 'arguments', 'eval', 'implements', 'interface', 'package',
-  'private', 'protected', 'public',
+  'break',
+  'case',
+  'catch',
+  'class',
+  'const',
+  'continue',
+  'debugger',
+  'default',
+  'delete',
+  'do',
+  'else',
+  'enum',
+  'export',
+  'extends',
+  'false',
+  'finally',
+  'for',
+  'function',
+  'if',
+  'import',
+  'in',
+  'instanceof',
+  'new',
+  'null',
+  'return',
+  'super',
+  'switch',
+  'this',
+  'throw',
+  'true',
+  'try',
+  'typeof',
+  'var',
+  'void',
+  'while',
+  'with',
+  'let',
+  'static',
+  'yield',
+  'await',
+  'arguments',
+  'eval',
+  'implements',
+  'interface',
+  'package',
+  'private',
+  'protected',
+  'public',
 };
 
 String _paramLabel(String name) =>

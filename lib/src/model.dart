@@ -238,10 +238,10 @@ final class DateTimeType extends BoundaryType {
   String get mangledCore => 'Date';
 }
 
-/// `Stream<T>` — TYPE-ONLY: it may appear solely in members of type-only
-/// (abstract, never-marshalled) classes, where it is declared as
-/// `AsyncIterable<T>` for TypeScript implementers. There is no runtime
-/// marshalling for streams yet (Phase 4).
+/// `Stream<T>` <-> `AsyncIterable<T>`: outgoing streams become objects
+/// implementing the JS async-iteration protocol (`for await` works; an early
+/// `break` cancels the Dart subscription); incoming async iterables are
+/// pulled into a Dart stream.
 final class StreamType extends BoundaryType {
   const StreamType(this.value, {super.isNullable = false});
 
@@ -255,6 +255,75 @@ final class StreamType extends BoundaryType {
 
   @override
   String get mangledCore => 'StreamOf${value.mangled}';
+}
+
+/// A function type: callbacks cross as JS functions in both directions.
+/// Only required positional parameters are supported.
+final class CallbackType extends BoundaryType {
+  const CallbackType(
+    this.parameters,
+    this.returnType, {
+    super.isNullable = false,
+  });
+
+  final List<BoundaryType> parameters;
+  final BoundaryType returnType;
+
+  @override
+  String get tsSourceCore {
+    final params = [
+      for (var i = 0; i < parameters.length; i++)
+        'p$i: ${parameters[i].tsSource}',
+    ].join(', ');
+    return '($params) => ${returnType.tsSource}';
+  }
+
+  // Function types must always be parenthesized inside composites/unions.
+  @override
+  String get tsSourceNested =>
+      isNullable ? '(($tsSourceCore) | null)' : '($tsSourceCore)';
+
+  @override
+  String get dartSourceCore =>
+      '${returnType.dartSource} Function('
+      '${parameters.map((p) => p.dartSource).join(', ')})';
+
+  @override
+  String get mangledCore =>
+      'Fn${parameters.map((p) => p.mangled).join('')}To${returnType.mangled}';
+}
+
+/// An exported enum: crosses as its value's name (a string-literal union in
+/// TypeScript). Enhanced-enum members are Dart-side API only — the identity
+/// round-trips, the members do not cross.
+final class EnumType extends BoundaryType {
+  const EnumType(this.enumName, {super.isNullable = false});
+
+  final String enumName;
+
+  @override
+  String get tsSourceCore => enumName;
+
+  @override
+  String get dartSourceCore => enumName;
+
+  @override
+  String get mangledCore => 'Enum$enumName';
+}
+
+/// An exported enum declaration.
+final class EnumApi {
+  const EnumApi({required this.name, required this.values, this.documentation});
+
+  final String name;
+
+  /// Value names, in declaration order.
+  final List<String> values;
+
+  final String? documentation;
+
+  /// The TypeScript union of value-name literals.
+  String get tsUnion => values.map((v) => '"$v"').join(' | ');
 }
 
 /// A reference to another class exported by the same package: crosses as the
@@ -369,10 +438,12 @@ final class ClassApi {
   const ClassApi({
     required this.name,
     required this.isAbstract,
-    required this.isTypeOnly,
     required this.constructorParameters,
     required this.properties,
     required this.methods,
+    this.extendsNames = const [],
+    this.inheritedProperties = const [],
+    this.inheritedMethods = const [],
     this.staticCallables = const [],
     this.staticProperties = const [],
     this.documentation,
@@ -385,16 +456,29 @@ final class ClassApi {
   /// their own implementations.
   final bool isAbstract;
 
-  /// Type-only classes (abstract contracts using `Stream` members) exist
-  /// purely as TypeScript interfaces: no wrapper is generated and their
-  /// instances can never cross the boundary at runtime.
-  final bool isTypeOnly;
-
   /// Parameters of the public unnamed constructor (empty when [isAbstract]).
   final List<ParameterApi> constructorParameters;
 
+  /// OWN members (declared on the class or folded in from its unexported
+  /// mixins) — these appear in the TypeScript interface body.
   final List<PropertyApi> properties;
   final List<FunctionApi> methods;
+
+  /// Exported ancestors (superclass chain and implemented interfaces): the
+  /// TypeScript interface `extends` these.
+  final List<String> extendsNames;
+
+  /// Members inherited from exported ancestors: omitted from the TypeScript
+  /// interface (they come via `extends`) but present on the runtime wrapper.
+  final List<PropertyApi> inheritedProperties;
+  final List<FunctionApi> inheritedMethods;
+
+  /// Every member the runtime wrapper must expose.
+  List<PropertyApi> get allProperties => [
+    ...properties,
+    ...inheritedProperties,
+  ];
+  List<FunctionApi> get allMethods => [...methods, ...inheritedMethods];
 
   /// Static methods, named constructors and factories — exported as callables
   /// on a `ClassName` namespace object (`X.fromMap(...)`).
@@ -426,6 +510,7 @@ final class ApiModel {
     required this.functions,
     required this.classes,
     this.constants = const [],
+    this.enums = const [],
   });
 
   /// Pub package name of the target (e.g. `hello_logic`).
@@ -440,6 +525,9 @@ final class ApiModel {
 
   /// Top-level `const`/`final` values, converted once at initialization.
   final List<PropertyApi> constants;
+
+  /// Exported enums (type-only exports: string-literal unions).
+  final List<EnumApi> enums;
 
   /// Every name exported from the npm package, in declaration order.
   List<String> get exportedNames => [
@@ -458,6 +546,20 @@ final class ApiModel {
     return null;
   }
 
+  EnumApi? enumByName(String name) {
+    for (final e in enums) {
+      if (e.name == name) return e;
+    }
+    return null;
+  }
+
+  /// Direct exported subclasses of [name] (classes listing it in
+  /// [ClassApi.extendsNames]) — drives polymorphic wrapper dispatch.
+  List<ClassApi> directSubclassesOf(String name) => [
+    for (final c in classes)
+      if (c.extendsNames.contains(name)) c,
+  ];
+
   /// Every boundary type mentioned anywhere in the API, recursively
   /// (composite types yield themselves and their components).
   Iterable<BoundaryType> get allTypes sync* {
@@ -472,10 +574,16 @@ final class ApiModel {
           yield* expand(value);
         case StreamType(:final value):
           yield* expand(value);
+        case CallbackType(:final parameters, :final returnType):
+          for (final p in parameters) {
+            yield* expand(p);
+          }
+          yield* expand(returnType);
         case PrimitiveType() ||
             VoidType() ||
             DynamicType() ||
             DateTimeType() ||
+            EnumType() ||
             ClassRefType():
           break;
       }

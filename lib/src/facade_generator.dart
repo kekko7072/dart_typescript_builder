@@ -58,10 +58,7 @@ final class _FacadeWriter {
   /// stable.
   final SplayTreeMap<String, String> _helpers = SplayTreeMap();
 
-  List<ClassApi> get _runtimeClasses => [
-    for (final c in api.classes)
-      if (!c.isTypeOnly) c,
-  ];
+  List<ClassApi> get _runtimeClasses => api.classes;
 
   /// Escapes a user identifier/label for embedding inside a single-quoted
   /// string literal of the GENERATED facade: `$` is legal in Dart
@@ -81,6 +78,7 @@ final class _FacadeWriter {
       ..writeln('// dart:js_interop facade over ${api.libraryUri}.')
       ..writeln('// ignore_for_file: type=lint')
       ..writeln()
+      ..writeln("import 'dart:async';")
       ..writeln("import 'dart:js_interop';")
       ..writeln("import 'dart:js_interop_unsafe';")
       ..writeln()
@@ -230,6 +228,50 @@ void _setEntry(JSObject target, String key, JSAny? value) {
   }
 }
 
+/// Outgoing streams: a JS object implementing the async-iteration protocol.
+/// `for await` works; an early `break` (protocol `return`) cancels the Dart
+/// subscription.
+JSObject _streamToJs<T>(Stream<T> stream, JSAny? Function(T) convert) {
+  final iterable = JSObject();
+  iterable.setProperty(JSSymbol.asyncIterator, (() {
+    final iterator = StreamIterator<T>(stream);
+    final jsIterator = JSObject();
+    jsIterator['next'] = (() {
+      return iterator.moveNext().then<JSAny?>((hasNext) {
+        final result = JSObject();
+        result['done'] = (!hasNext).toJS;
+        result['value'] = hasNext ? convert(iterator.current) : null;
+        return result;
+      }).toJS;
+    }).toJS;
+    jsIterator['return'] = (([JSAny? value]) {
+      final result = JSObject();
+      result['done'] = true.toJS;
+      unawaited(iterator.cancel());
+      return result;
+    }).toJS;
+    return jsIterator;
+  }).toJS);
+  return iterable;
+}
+
+/// Incoming async iterables, pulled into a Dart stream.
+Stream<T> _streamFromJs<T>(JSAny? value, T Function(JSAny?) convert) async* {
+  final iterable = value as JSObject;
+  final makeIterator = iterable.getProperty<JSFunction>(
+    JSSymbol.asyncIterator,
+  );
+  final iterator = makeIterator.callAsFunction(iterable) as JSObject;
+  final next = iterator.getProperty<JSFunction>('next'.toJS);
+  while (true) {
+    final result =
+        await (next.callAsFunction(iterator) as JSPromise<JSAny?>).toDart
+            as JSObject;
+    if ((result['done'] as JSBoolean?)?.toDart ?? false) break;
+    yield convert(result['value']);
+  }
+}
+
 /// Builds a FRESH JS array. Never use `List.toJS` for outgoing values: on
 /// dart2js it is a zero-copy cast and the Dart list's internal `\$ti`
 /// type-info symbol would leak into consumer-visible arrays.
@@ -344,9 +386,7 @@ DateTime _dateTimeFromJs(JSAny? value) {
 JSAny? _dynamicToJs(Object? value) =>
     _dynamicToJsRec(value, Set<Object>.identity());
 ''');
-    buffer.writeln(
-      'JSAny? _dynamicToJsRec(Object? value, Set<Object> seen) {',
-    );
+    buffer.writeln('JSAny? _dynamicToJsRec(Object? value, Set<Object> seen) {');
     buffer.writeln('''
   if (value == null) return null;
   if (value is bool) return value.toJS;
@@ -360,6 +400,12 @@ JSAny? _dynamicToJs(Object? value) =>
       );
     }
     buffer.writeln('''
+  if (value is Enum) {
+    _throwBoundaryError(
+      'enum values cannot cross inside dynamic data '
+      '(\${value.runtimeType}); use a typed API',
+    );
+  }
   if (value is Map) {
     if (!seen.add(value)) {
       _throwBoundaryError('cyclic data cannot cross the boundary');
@@ -444,13 +490,22 @@ Object? _dynamicFromJs(JSAny? value) {
       ..writeln('final Expando<JSObject> _wrapCache_$name = Expando();')
       ..writeln()
       ..writeln('/// Opaque JS handle over `$name` (identity-cached).')
-      ..writeln('JSObject _wrap_$name(\$target.$name inner) {')
+      ..writeln('JSObject _wrap_$name(\$target.$name inner) {');
+    // Polymorphic dispatch: a supertype-typed value gets the wrapper of its
+    // most-derived exported class (each subclass wrapper dispatches on).
+    for (final subclass in api.directSubclassesOf(name)) {
+      buffer.writeln(
+        '  if (inner is \$target.${subclass.name}) '
+        'return _wrap_${subclass.name}(inner);',
+      );
+    }
+    buffer
       ..writeln('  final cached = _wrapCache_$name[inner];')
       ..writeln('  if (cached != null) return cached;')
       ..writeln('  final wrapper = JSObject();')
       ..writeln('  _wrapCache_$name[inner] = wrapper;')
       ..writeln("  wrapper['__dtb_handle__'] = inner.toJSBox;");
-    for (final property in classApi.properties) {
+    for (final property in classApi.allProperties) {
       final getter =
           '(() => ${_toJs(property.type, 'inner.${property.name}')}).toJS';
       if (property.isReadonly) {
@@ -472,7 +527,7 @@ Object? _dynamicFromJs(JSAny? value) {
           ..writeln('  );');
       }
     }
-    for (final method in classApi.methods) {
+    for (final method in classApi.allMethods) {
       buffer.writeln(
         "  wrapper['${_lit(method.name)}'] = "
         '${_closure(method, '$name.${method.name}', (args) => 'inner.${method.name}($args)')}.toJS;',
@@ -651,6 +706,10 @@ Object? _dynamicFromJs(JSAny? value) {
       StreamType(:final value) => 'Stream<${_dartType(value)}>',
       DateTimeType() => 'DateTime',
       ClassRefType(:final className) => '\$target.$className',
+      EnumType(:final enumName) => '\$target.$enumName',
+      CallbackType(:final parameters, :final returnType) =>
+        '${_dartType(returnType)} Function('
+            '${parameters.map(_dartType).join(', ')})',
     };
     return type.isNullable ? '$core?' : core;
   }
@@ -664,8 +723,6 @@ Object? _dynamicFromJs(JSAny? value) {
         return '_dynamicFromJs($expr)';
       case VoidType():
         throw StateError('void cannot be a parameter type');
-      case StreamType():
-        throw StateError('Stream cannot cross the boundary at runtime');
       case DateTimeType(isNullable: false):
         return '_dateTimeFromJs($expr)';
       case ClassRefType(:final className, isNullable: false):
@@ -686,12 +743,12 @@ Object? _dynamicFromJs(JSAny? value) {
         return '_dynamicToJs($expr)';
       case VoidType():
         throw StateError('void has no value to convert');
-      case StreamType():
-        throw StateError('Stream cannot cross the boundary at runtime');
       case DateTimeType(isNullable: false):
         return '_dateTimeToJs($expr)';
       case ClassRefType(:final className, isNullable: false):
         return '_wrap_$className($expr)';
+      case EnumType(isNullable: false):
+        return '$expr.name.toJS';
       default:
         return '${_registerToJs(type)}($expr)';
     }
@@ -800,11 +857,71 @@ Object? _dynamicFromJs(JSAny? value) {
               '      .toDart\n'
               '      .then((result) => ${_toDart(value, 'result')});\n'
               '}',
+        StreamType(value: final valueType) =>
+          'Stream<${_dartType(valueType)}> $name(JSAny? value) {\n'
+              '  if (value == null ||\n'
+              '      !value.isA<JSObject>() ||\n'
+              '      (value as JSObject).getProperty<JSAny?>(\n'
+              '            JSSymbol.asyncIterator,\n'
+              '          ) ==\n'
+              '          null) {\n'
+              "    _fail('an async iterable', value);\n"
+              '  }\n'
+              '  return _streamFromJs<${_dartType(valueType)}>(\n'
+              '    value,\n'
+              '    (item) => ${_toDart(valueType, 'item')},\n'
+              '  );\n'
+              '}',
+        EnumType(:final enumName) => _enumToDartHelper(name, enumName),
+        CallbackType(:final parameters, :final returnType) =>
+          _callbackToDartHelper(name, parameters, returnType),
         _ => throw StateError('no toDart helper for $type'),
       };
     }
     _helpers[name] = source;
     return name;
+  }
+
+  String _enumToDartHelper(String name, String enumName) {
+    final values = api.enumByName(enumName)?.values ?? const <String>[];
+    final union = values.map((v) => "'${_lit(v)}'").join(' | ');
+    return '\$target.$enumName $name(JSAny? value) {\n'
+        "  if (value != null && value.typeofEquals('string')) {\n"
+        '    final name = (value as JSString).toDart;\n'
+        '    for (final option in \$target.$enumName.values) {\n'
+        '      if (option.name == name) return option;\n'
+        '    }\n'
+        '  }\n'
+        '  _fail("one of $union", value);\n'
+        '}';
+  }
+
+  /// JS function -> Dart function: arguments convert Dart -> JS, the result
+  /// converts back (a Promise result becomes a Future for async callbacks).
+  String _callbackToDartHelper(
+    String name,
+    List<BoundaryType> parameters,
+    BoundaryType returnType,
+  ) {
+    final params = [
+      for (var i = 0; i < parameters.length; i++)
+        '${_dartType(parameters[i])} p$i',
+    ].join(', ');
+    final args = [
+      'null',
+      for (var i = 0; i < parameters.length; i++) _toJs(parameters[i], 'p$i'),
+    ].join(', ');
+    final call = "fn.callMethodVarArgs<JSAny?>('call'.toJS, [$args])";
+    final body = returnType is VoidType
+        ? '($params) {\n    $call;\n  }'
+        : '($params) => ${_toDart(returnType, call)}';
+    return '${_dartType(returnType)} Function($params) $name(JSAny? value) {\n'
+        "  if (value == null || !value.typeofEquals('function')) {\n"
+        "    _fail('a function', value);\n"
+        '  }\n'
+        '  final fn = value as JSFunction;\n'
+        '  return $body;\n'
+        '}';
   }
 
   String _registerToJs(BoundaryType type) {
@@ -837,6 +954,14 @@ Object? _dynamicFromJs(JSAny? value) {
         FutureType(:final value) =>
           'JSAny? $name(Future<${_dartType(value)}> value) =>\n'
               '    value.then<JSAny?>((result) => ${_toJs(value, 'result')}).toJS;',
+        StreamType(value: final valueType) =>
+          'JSAny? $name(Stream<${_dartType(valueType)}> value) =>\n'
+              '    _streamToJs<${_dartType(valueType)}>(\n'
+              '      value,\n'
+              '      (item) => ${_toJs(valueType, 'item')},\n'
+              '    );',
+        CallbackType(:final parameters, :final returnType) =>
+          _callbackToJsHelper(name, parameters, returnType),
         _ => throw StateError('no toJs helper for $type'),
       };
     }
@@ -844,10 +969,41 @@ Object? _dynamicFromJs(JSAny? value) {
     return name;
   }
 
+  /// Dart function -> JS function: an arity-tolerant closure converting each
+  /// argument JS -> Dart and the result back.
+  String _callbackToJsHelper(
+    String name,
+    List<BoundaryType> parameters,
+    BoundaryType returnType,
+  ) {
+    final params = [
+      for (var i = 0; i < parameters.length; i++)
+        '${_dartType(parameters[i])} p$i',
+    ].join(', ');
+    final jsParams = [
+      for (var i = 0; i < parameters.length; i++) 'JSAny? \$a$i',
+    ].join(', ');
+    final signature = jsParams.isEmpty ? '()' : '([$jsParams])';
+    final args = [
+      for (var i = 0; i < parameters.length; i++)
+        _toDart(parameters[i], '\$a$i'),
+    ].join(', ');
+    final body = returnType is VoidType
+        ? '($signature {\n      value($args);\n    })'
+        : '($signature => ${_toJs(returnType, 'value($args)')})';
+    return 'JSAny? $name(${_dartType(returnType)} Function($params) value) =>\n'
+        '    $body.toJS;';
+  }
+
   BoundaryType _withoutNullability(BoundaryType type) => switch (type) {
     PrimitiveType(:final kind) => PrimitiveType(kind),
     DateTimeType(:final mode) => DateTimeType(mode: mode),
     ClassRefType(:final className) => ClassRefType(className),
+    EnumType(:final enumName) => EnumType(enumName),
+    CallbackType(:final parameters, :final returnType) => CallbackType(
+      parameters,
+      returnType,
+    ),
     ListType(:final element, :final isIterable) => ListType(
       element,
       isIterable: isIterable,

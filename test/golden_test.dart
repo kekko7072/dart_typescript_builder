@@ -81,7 +81,6 @@ void main() {
 
       final note = api.classByName('Note')!;
       expect(note.isAbstract, isFalse);
-      expect(note.isTypeOnly, isFalse);
       expect(note.staticCallables.map((s) => s.name), [
         'fromMap',
         'listFromMaps',
@@ -93,17 +92,17 @@ void main() {
         ParameterKind.named,
       ]);
 
-      // Stream-bearing abstract contract: exported as a type-only interface.
+      // Stream-bearing abstract contract: an interface with a runtime
+      // wrapper (streams marshal as AsyncIterable since Phase 4).
       final repository = api.classByName('NoteRepository')!;
       expect(repository.isAbstract, isTrue);
-      expect(repository.isTypeOnly, isTrue);
       expect(repository.methods.map((m) => m.name), [
         'getByTitle',
         'watchAll',
         'save',
       ]);
 
-      // Type-only classes never appear in the runtime exports.
+      // Abstract classes have no factory, so no runtime export of their own.
       expect(api.exportedNames, isNot(contains('NoteRepository')));
       expect(
         api.exportedNames,
@@ -149,6 +148,93 @@ void main() {
         'boundary_logic/index.firestore.d.ts',
         update: update,
       );
+    });
+  });
+
+  _phase34Groups(update);
+}
+
+void _phase34Groups(bool update) {
+  group('oop_logic', () {
+    late ApiModel api;
+
+    setUpAll(() async {
+      ensureFixtureResolved('oop_logic');
+      api = await analyzePackage(readTargetPackage(fixturePath('oop_logic')));
+    });
+
+    test('api model shape', () {
+      expect(api.enums.map((e) => e.name), ['Priority', 'Signal']);
+      expect(api.enumByName('Signal')!.values, ['red', 'amber', 'green']);
+      // Enhanced-enum members stay Dart-side; values still cross.
+      expect(api.enumByName('Priority')!.values, ['low', 'high']);
+
+      final puppy = api.classByName('Puppy')!;
+      expect(puppy.extendsNames, ['Dog']);
+      // Own: the override; inherited: Dog's members (incl. mixin-flattened).
+      expect(puppy.methods.map((m) => m.name), ['speak']);
+      expect(
+        puppy.inheritedMethods.map((m) => m.name),
+        containsAll(['fetch', 'tag']),
+      );
+      expect(
+        puppy.inheritedProperties.map((f) => f.name),
+        containsAll(['name', 'tags']),
+      );
+
+      final dog = api.classByName('Dog')!;
+      expect(dog.extendsNames, ['Animal']);
+      // Mixin members fold into the class's OWN interface body.
+      expect(dog.methods.map((m) => m.name), containsAll(['speak', 'tag']));
+      expect(api.directSubclassesOf('Dog').map((c) => c.name), ['Puppy']);
+      expect(api.directSubclassesOf('Animal').map((c) => c.name), ['Dog']);
+    });
+
+    test('facade matches golden', () {
+      _expectGolden(
+        generateFacade(api, globalExportKey: '__dtb_exports_oop_logic__'),
+        'oop_logic/facade.dart',
+        update: update,
+      );
+    });
+
+    test('.d.ts matches golden', () {
+      _expectGolden(generateDts(api), 'oop_logic/index.d.ts', update: update);
+    });
+  });
+
+  group('async_logic', () {
+    late ApiModel api;
+
+    setUpAll(() async {
+      ensureFixtureResolved('async_logic');
+      api = await analyzePackage(readTargetPackage(fixturePath('async_logic')));
+    });
+
+    test('api model shape', () {
+      final feed = api.classByName('TicketFeed')!;
+      expect(feed.isAbstract, isTrue);
+      expect(feed.methods.map((m) => m.name), ['watch', 'close']);
+      expect(feed.methods.first.returnType, isA<StreamType>());
+      expect(
+        api.functions
+            .firstWhere((f) => f.name == 'applyTwice')
+            .parameters[1]
+            .type,
+        isA<CallbackType>(),
+      );
+    });
+
+    test('facade matches golden', () {
+      _expectGolden(
+        generateFacade(api, globalExportKey: '__dtb_exports_async_logic__'),
+        'async_logic/facade.dart',
+        update: update,
+      );
+    });
+
+    test('.d.ts matches golden', () {
+      _expectGolden(generateDts(api), 'async_logic/index.d.ts', update: update);
     });
   });
 }

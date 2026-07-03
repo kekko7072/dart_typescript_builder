@@ -2,6 +2,7 @@
 // dart:js_interop facade over package:hello_logic/hello_logic.dart.
 // ignore_for_file: type=lint
 
+import 'dart:async';
 import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
 
@@ -84,15 +85,81 @@ JSObject? _asOptions(JSAny? value, String owner) {
   );
 }
 
+// Own-property check: `has`/`in` walks the prototype chain, which would make
+// options named after Object.prototype members (toString, constructor, ...)
+// always look "present".
+@JS('Object.hasOwn')
+external bool _hasOwn(JSObject object, JSString name);
+
 JSAny? _requireOption(JSObject? options, String name, String owner) {
-  if (options == null || !options.has(name)) {
+  if (options == null || !_hasOwn(options, name.toJS)) {
     _throwBoundaryError("missing required option '$name' of '$owner'");
   }
   return options[name];
 }
 
 JSAny? _readOption(JSObject? options, String name) =>
-    (options == null || !options.has(name)) ? null : options[name];
+    (options == null || !_hasOwn(options, name.toJS)) ? null : options[name];
+
+/// Sets a map entry on an outgoing plain object. A key literally named
+/// `__proto__` must go through defineProperty: plain assignment would
+/// replace the object's prototype instead of storing the entry.
+void _setEntry(JSObject target, String key, JSAny? value) {
+  if (key == '__proto__') {
+    final descriptor = JSObject();
+    descriptor['value'] = value;
+    descriptor['enumerable'] = true.toJS;
+    descriptor['writable'] = true.toJS;
+    descriptor['configurable'] = true.toJS;
+    _definePropertyRaw(target, key.toJS, descriptor);
+  } else {
+    target[key] = value;
+  }
+}
+
+/// Outgoing streams: a JS object implementing the async-iteration protocol.
+/// `for await` works; an early `break` (protocol `return`) cancels the Dart
+/// subscription.
+JSObject _streamToJs<T>(Stream<T> stream, JSAny? Function(T) convert) {
+  final iterable = JSObject();
+  iterable.setProperty(JSSymbol.asyncIterator, (() {
+    final iterator = StreamIterator<T>(stream);
+    final jsIterator = JSObject();
+    jsIterator['next'] = (() {
+      return iterator.moveNext().then<JSAny?>((hasNext) {
+        final result = JSObject();
+        result['done'] = (!hasNext).toJS;
+        result['value'] = hasNext ? convert(iterator.current) : null;
+        return result;
+      }).toJS;
+    }).toJS;
+    jsIterator['return'] = (([JSAny? value]) {
+      final result = JSObject();
+      result['done'] = true.toJS;
+      unawaited(iterator.cancel());
+      return result;
+    }).toJS;
+    return jsIterator;
+  }).toJS);
+  return iterable;
+}
+
+/// Incoming async iterables, pulled into a Dart stream.
+Stream<T> _streamFromJs<T>(JSAny? value, T Function(JSAny?) convert) async* {
+  final iterable = value as JSObject;
+  final makeIterator = iterable.getProperty<JSFunction>(
+    JSSymbol.asyncIterator,
+  );
+  final iterator = makeIterator.callAsFunction(iterable) as JSObject;
+  final next = iterator.getProperty<JSFunction>('next'.toJS);
+  while (true) {
+    final result =
+        await (next.callAsFunction(iterator) as JSPromise<JSAny?>).toDart
+            as JSObject;
+    if ((result['done'] as JSBoolean?)?.toDart ?? false) break;
+    yield convert(result['value']);
+  }
+}
 
 /// Builds a FRESH JS array. Never use `List.toJS` for outgoing values: on
 /// dart2js it is a zero-copy cast and the Dart list's internal `$ti`
@@ -124,14 +191,26 @@ DateTime _dateTimeFromJs(JSAny? value) {
   _fail('a JS Date', value);
 }
 
-JSAny? _dynamicToJs(Object? value) {
+JSAny? _dynamicToJs(Object? value) =>
+    _dynamicToJsRec(value, Set<Object>.identity());
+
+JSAny? _dynamicToJsRec(Object? value, Set<Object> seen) {
   if (value == null) return null;
   if (value is bool) return value.toJS;
   if (value is num) return value.toJS;
   if (value is String) return value.toJS;
   if (value is DateTime) return _dateTimeToJs(value);
-  if (value is $target.Counter) return _wrapCounter(value);
+  if (value is $target.Counter) return _wrap_Counter(value);
+  if (value is Enum) {
+    _throwBoundaryError(
+      'enum values cannot cross inside dynamic data '
+      '(${value.runtimeType}); use a typed API',
+    );
+  }
   if (value is Map) {
+    if (!seen.add(value)) {
+      _throwBoundaryError('cyclic data cannot cross the boundary');
+    }
     final result = JSObject();
     value.forEach((key, item) {
       if (key is! String) {
@@ -140,12 +219,18 @@ JSAny? _dynamicToJs(Object? value) {
           'got a key of type ${key.runtimeType}',
         );
       }
-      result[key] = _dynamicToJs(item);
+      _setEntry(result, key, _dynamicToJsRec(item, seen));
     });
+    seen.remove(value);
     return result;
   }
   if (value is Iterable) {
-    return _jsArrayOf(value.map(_dynamicToJs));
+    if (!seen.add(value)) {
+      _throwBoundaryError('cyclic data cannot cross the boundary');
+    }
+    final result = _jsArrayOf(value.map((item) => _dynamicToJsRec(item, seen)));
+    seen.remove(value);
+    return result;
   }
   _throwBoundaryError(
     'cannot marshal a value of type ${value.runtimeType} across the '
@@ -191,14 +276,14 @@ Object? _dynamicFromJs(JSAny? value) {
   _fail('a marshallable value', value);
 }
 
-final Expando<JSObject> _wrapCacheCounter = Expando();
+final Expando<JSObject> _wrapCache_Counter = Expando();
 
 /// Opaque JS handle over `Counter` (identity-cached).
-JSObject _wrapCounter($target.Counter inner) {
-  final cached = _wrapCacheCounter[inner];
+JSObject _wrap_Counter($target.Counter inner) {
+  final cached = _wrapCache_Counter[inner];
   if (cached != null) return cached;
   final wrapper = JSObject();
-  _wrapCacheCounter[inner] = wrapper;
+  _wrapCache_Counter[inner] = wrapper;
   wrapper['__dtb_handle__'] = inner.toJSBox;
   _defineGetter(wrapper, 'label', (() => inner.label.toJS).toJS);
   _defineAccessor(
@@ -221,7 +306,7 @@ JSObject _wrapCounter($target.Counter inner) {
   return wrapper;
 }
 
-$target.Counter _unwrapCounter(JSAny? value) {
+$target.Counter _unwrap_Counter(JSAny? value) {
   if (value != null && value.isA<JSObject>()) {
     final handle = (value as JSObject)['__dtb_handle__'];
     if (handle != null && handle.isA<JSBoxedDartObject>()) {
@@ -237,8 +322,10 @@ int _toDartInt(JSAny? value) {
     _fail('a number', value);
   }
   final number = (value as JSNumber).toDartDouble;
-  if (!number.isFinite || number.truncateToDouble() != number) {
-    _fail('an integer', value);
+  if (!number.isFinite ||
+      number.truncateToDouble() != number ||
+      number.abs() > 9007199254740992) {
+    _fail('a safe integer (|n| <= 2^53)', value);
   }
   return number.toInt();
 }
@@ -248,7 +335,9 @@ num _toDartNum(JSAny? value) {
     _fail('a number', value);
   }
   final number = (value as JSNumber).toDartDouble;
-  return (number.isFinite && number.truncateToDouble() == number)
+  return (number.isFinite &&
+          number.truncateToDouble() == number &&
+          number.abs() <= 9007199254740992)
       ? number.toInt()
       : number;
 }
@@ -272,7 +361,7 @@ void _install(JSObject target) {
     return $target.isEven(_toDartInt($a0)).toJS;
   }).toJS;
   target['createCounter'] = (([JSAny? $a0, JSAny? $a1]) {
-    return _wrapCounter($target.Counter(_toDartString($a0), _toDartInt($a1)));
+    return _wrap_Counter($target.Counter(_toDartString($a0), _toDartInt($a1)));
   }).toJS;
 }
 
