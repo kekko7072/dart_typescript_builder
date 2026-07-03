@@ -50,8 +50,12 @@ String generateFacade(
   DateTimeMode dateTimeMode = DateTimeMode.jsDate,
   bool firestoreTypes = false,
 }) {
-  return _FacadeWriter(api, globalExportKey, dateTimeMode, firestoreTypes)
-      .write();
+  return _FacadeWriter(
+    api,
+    globalExportKey,
+    dateTimeMode,
+    firestoreTypes,
+  ).write();
 }
 
 final class _FacadeWriter {
@@ -555,11 +559,13 @@ Object? _dynamicFromJs(JSAny? value) {
   }
   if (_isJsDateTimeValue(value)) return _dateTimeFromJs(value);''');
     if (firestoreTypes) {
-      buffer.writeln('''
+      buffer.writeln(
+        '''
   if (_isJsUint8Array(value)) {
     return Uint8List.fromList((value as JSUint8Array).toDart);
   }
-  if (_isFsPassthroughValue(value)) return _FirestoreValue(value as JSObject);''');
+  if (_isFsPassthroughValue(value)) return _FirestoreValue(value as JSObject);''',
+      );
     }
     buffer.writeln('''
   if (value.typeofEquals('function')) {

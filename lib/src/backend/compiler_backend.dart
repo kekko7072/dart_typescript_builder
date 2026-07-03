@@ -99,9 +99,7 @@ void writeEsmFirestoreValueInjection(
 ) {
   if (!request.firestoreTypes) return;
   buffer
-    ..writeln(
-      'import * as __dtb\$fsValues from "firebase-admin/firestore";',
-    )
+    ..writeln('import * as __dtb\$fsValues from "firebase-admin/firestore";')
     ..writeln('// Full Firestore value support (--firestore-types): inject')
     ..writeln('// the classes the compiled Dart program recognizes. Entries')
     ..writeln('// missing from older firebase-admin versions stay undefined')
