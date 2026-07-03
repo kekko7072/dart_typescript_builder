@@ -104,7 +104,7 @@ final class Dart2WasmBackend implements CompilerBackend {
       ..writeln('globalThis.__dtb_throw__ ??= (message) => {')
       ..writeln('  throw new TypeError(message);')
       ..writeln('};');
-    if (request.api.usesFirestoreTimestamp) {
+    if (request.api.usesFirestoreTimestamp || request.firestoreTypes) {
       buffer
         ..writeln(
           'import { Timestamp as __dtb\$Timestamp } from '
@@ -116,6 +116,7 @@ final class Dart2WasmBackend implements CompilerBackend {
         ..writeln('// peer dependency).')
         ..writeln('globalThis.__dtb_Timestamp__ = __dtb\$Timestamp;');
     }
+    writeEsmFirestoreValueInjection(buffer, request);
     buffer
       ..writeln()
       ..writeln(

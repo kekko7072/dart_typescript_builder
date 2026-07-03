@@ -86,14 +86,32 @@ final class Dart2JsBackend implements CompilerBackend {
   }
 
   String _commonjsEntry(BackendBuildRequest request, String runtimeName) {
-    final firestore = request.api.usesFirestoreTimestamp
-        ? '// DateTime crosses as a Firestore Timestamp: inject the class for\n'
-              '// the compiled Dart program (firebase-admin is a peer '
-              'dependency).\n'
-              'const { Timestamp: __dtb\$Timestamp } = '
-              'require("firebase-admin/firestore");\n'
-              'globalThis.__dtb_Timestamp__ = __dtb\$Timestamp;\n'
-        : '';
+    final firestoreLines = StringBuffer();
+    if (request.api.usesFirestoreTimestamp || request.firestoreTypes) {
+      firestoreLines.write(
+        '// DateTime crosses as a Firestore Timestamp: inject the class for\n'
+        '// the compiled Dart program (firebase-admin is a peer '
+        'dependency).\n'
+        'const { Timestamp: __dtb\$Timestamp } = '
+        'require("firebase-admin/firestore");\n'
+        'globalThis.__dtb_Timestamp__ = __dtb\$Timestamp;\n',
+      );
+    }
+    if (request.firestoreTypes) {
+      firestoreLines.write(
+        '// Full Firestore value support (--firestore-types): inject the\n'
+        '// classes the compiled Dart program recognizes. Entries missing\n'
+        '// from older firebase-admin versions stay undefined (duck-typed\n'
+        '// fallbacks still apply where possible).\n'
+        'const __dtb\$fsValues = require("firebase-admin/firestore");\n'
+        'globalThis.__dtb_GeoPoint__ = __dtb\$fsValues.GeoPoint;\n'
+        'globalThis.__dtb_DocumentReference__ = '
+        '__dtb\$fsValues.DocumentReference;\n'
+        'globalThis.__dtb_FieldValue__ = __dtb\$fsValues.FieldValue;\n'
+        'globalThis.__dtb_VectorValue__ = __dtb\$fsValues.VectorValue;\n',
+      );
+    }
+    final firestore = firestoreLines.toString();
     final names = request.api.exportedNames;
     return '''
 "use strict";
@@ -124,7 +142,7 @@ ${names.map((n) => 'module.exports.$n = __dtb\$exports.$n;').join('\n')}
       ..writeln('};');
     // Glue locals use a `__dtb$` prefix: Dart cannot export names starting
     // with `_`, so exported names can never collide with them.
-    if (request.api.usesFirestoreTimestamp) {
+    if (request.api.usesFirestoreTimestamp || request.firestoreTypes) {
       buffer
         ..writeln(
           'import { Timestamp as __dtb\$Timestamp } from '
@@ -132,6 +150,7 @@ ${names.map((n) => 'module.exports.$n = __dtb\$exports.$n;').join('\n')}
         )
         ..writeln('globalThis.__dtb_Timestamp__ = __dtb\$Timestamp;');
     }
+    writeEsmFirestoreValueInjection(buffer, request);
     buffer
       ..writeln(
         'import { createRequire as __dtb\$createRequire } from "node:module";',

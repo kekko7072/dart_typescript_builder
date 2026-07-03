@@ -16,7 +16,7 @@
 /**
  * Applies a JS-supplied callback twice (JS function -> Dart function).
  */
-export function applyTwice(seed: number, transform: (p0: number) => number): number;
+export function applyTwice(seed: number, transform: ((p0: number) => number)): number;
 
 /**
  * Emits `1..count` with a small delay (Dart stream -> JS AsyncIterable).
@@ -26,7 +26,7 @@ export function counter(count: number): AsyncIterable<number>;
 /**
  * A callback that receives a class instance (handles in callbacks).
  */
-export function describeVia(ticket: Ticket, formatter: (p0: Ticket) => string): string;
+export function describeVia(ticket: Ticket, formatter: ((p0: Ticket) => string)): string;
 
 /**
  * Returns a concrete [TicketFeed] through the abstract type.
@@ -36,7 +36,7 @@ export function feedOf(owners: string[]): TicketFeed;
 /**
  * Awaits an async (Promise-returning) callback.
  */
-export function greetVia(loader: (p0: string) => Promise<string>): Promise<string>;
+export function greetVia(loader: ((p0: string) => Promise<string>)): Promise<string>;
 
 /**
  * Streams of class instances.
@@ -46,7 +46,7 @@ export function issueTickets(owners: string[]): AsyncIterable<Ticket>;
 /**
  * Returns a function to JS (Dart function -> JS function).
  */
-export function makeAdder(base: number): (p0: number) => number;
+export function makeAdder(base: number): ((p0: number) => number);
 
 /**
  * Sums a JS async iterable (JS AsyncIterable -> Dart stream).

@@ -23,6 +23,7 @@ final class BuildOptions {
     this.moduleFormat,
     this.npmPackageName,
     this.dateTimeMode = DateTimeMode.jsDate,
+    this.firestoreTypes = false,
     this.runNpmInstall = true,
     this.verbose = false,
   });
@@ -46,6 +47,13 @@ final class BuildOptions {
   /// How `DateTime` crosses the boundary: JS `Date` (default) or Firestore
   /// `Timestamp` from firebase-admin (for TypeScript backends on Firebase).
   final DateTimeMode dateTimeMode;
+
+  /// Marshal the full firebase-admin Firestore value set inside `dynamic`
+  /// data (`--firestore-types`): `Buffer`/`Uint8Array` <-> `Uint8List`
+  /// (copied) plus identity-preserving pass-through for `GeoPoint`,
+  /// `DocumentReference`, `FieldValue` and `VectorValue`. Opt-in, and
+  /// requires [dateTimeMode] to be [DateTimeMode.firestoreTimestamp].
+  final bool firestoreTypes;
 
   /// Run `npm install` in the output directory after packaging, so the
   /// folder is a complete, immediately consumable npm project: the first run
@@ -85,6 +93,14 @@ final class BuildResult {
 /// Throws [UnsupportedApiException] for public API constructs outside the
 /// supported subset and [BuildException] for structural failures.
 Future<BuildResult> buildNpmPackage(BuildOptions options) async {
+  if (options.firestoreTypes &&
+      options.dateTimeMode != DateTimeMode.firestoreTimestamp) {
+    throw BuildException(
+      '--firestore-types requires --datetime firestore: the full '
+      'firebase-admin value support builds on the Firestore Timestamp '
+      'boundary.',
+    );
+  }
   final backend = CompilerBackend.forEngine(options.engine);
   final moduleFormat =
       options.moduleFormat ??
@@ -118,6 +134,7 @@ Future<BuildResult> buildNpmPackage(BuildOptions options) async {
       api,
       globalExportKey: globalExportKey,
       dateTimeMode: options.dateTimeMode,
+      firestoreTypes: options.firestoreTypes,
     ),
   );
 
@@ -134,6 +151,7 @@ Future<BuildResult> buildNpmPackage(BuildOptions options) async {
       api: api,
       globalExportKey: globalExportKey,
       verbose: options.verbose,
+      firestoreTypes: options.firestoreTypes,
     ),
   );
   final packaged = writeNpmPackage(
@@ -143,6 +161,7 @@ Future<BuildResult> buildNpmPackage(BuildOptions options) async {
     api: api,
     backendOutput: backendOutput,
     engineId: backend.id,
+    firestoreTypes: options.firestoreTypes,
   );
   ensureAnalyzerExclusion(target, outputDir.path);
   final npmInstalled =

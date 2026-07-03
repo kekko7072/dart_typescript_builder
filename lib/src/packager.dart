@@ -31,8 +31,9 @@ PackageResult writeNpmPackage({
   required ApiModel api,
   required BackendOutput backendOutput,
   required String engineId,
+  bool firestoreTypes = false,
 }) {
-  final dts = generateDts(api);
+  final dts = generateDts(api, firestoreTypes: firestoreTypes);
   File(p.join(outputDir, 'index.d.ts')).writeAsStringSync(dts);
 
   final packageJson = <String, Object?>{
@@ -48,7 +49,9 @@ PackageResult writeNpmPackage({
       '.': {'types': './index.d.ts', 'default': './index.js'},
     },
     'files': [...backendOutput.emittedFiles, 'index.d.ts', 'README.md'],
-    if (api.usesFirestoreTimestamp)
+    // --firestore-types needs the injection even when no DateTime appears
+    // in the API surface itself.
+    if (api.usesFirestoreTimestamp || firestoreTypes)
       'peerDependencies': {'firebase-admin': '>=11'},
     ...backendOutput.packageJsonFields,
   };
@@ -56,9 +59,9 @@ PackageResult writeNpmPackage({
     '${const JsonEncoder.withIndent('  ').convert(packageJson)}\n',
   );
 
-  File(
-    p.join(outputDir, 'README.md'),
-  ).writeAsStringSync(_readme(npmName, target, api, engineId));
+  File(p.join(outputDir, 'README.md')).writeAsStringSync(
+    _readme(npmName, target, api, engineId, firestoreTypes: firestoreTypes),
+  );
 
   return PackageResult(
     outputDir: outputDir,
@@ -80,8 +83,9 @@ String _readme(
   String npmName,
   TargetPackageInfo target,
   ApiModel api,
-  String engineId,
-) {
+  String engineId, {
+  required bool firestoreTypes,
+}) {
   final buffer = StringBuffer()
     ..writeln('# $npmName')
     ..writeln()
@@ -123,5 +127,14 @@ String _readme(
       'mutations do not travel across the boundary; send changes back via '
       'return values.',
     );
+  if (firestoreTypes) {
+    buffer.writeln(
+      '- Built with `--firestore-types`: inside `unknown` data, '
+      '`Buffer`/`Uint8Array` crosses as Dart `Uint8List` (copied, returns '
+      'as a fresh `Uint8Array`), and `GeoPoint`, `DocumentReference`, '
+      '`FieldValue` and `VectorValue` pass through unchanged (identity '
+      'preserved) — documents containing them survive round trips.',
+    );
+  }
   return buffer.toString();
 }

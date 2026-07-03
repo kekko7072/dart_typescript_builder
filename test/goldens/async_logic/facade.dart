@@ -333,7 +333,7 @@ $target.TicketFeed _unwrap_TicketFeed(JSAny? value) {
   _fail('a TicketFeed handle created by this package', value);
 }
 
-int Function(int p0) _toDartFnIntToInt(JSAny? value) {
+int Function(int p0) _toDartFn1Of3IntTo3Int(JSAny? value) {
   if (value == null || !value.typeofEquals('function')) {
     _fail('a function', value);
   }
@@ -341,20 +341,20 @@ int Function(int p0) _toDartFnIntToInt(JSAny? value) {
   return (int p0) => _toDartInt(fn.callMethodVarArgs<JSAny?>('call'.toJS, [null, p0.toJS]));
 }
 
-String Function($target.Ticket p0) _toDartFnRefTicketToString(JSAny? value) {
-  if (value == null || !value.typeofEquals('function')) {
-    _fail('a function', value);
-  }
-  final fn = value as JSFunction;
-  return ($target.Ticket p0) => _toDartString(fn.callMethodVarArgs<JSAny?>('call'.toJS, [null, _wrap_Ticket(p0)]));
-}
-
-Future<String> Function(String p0) _toDartFnStringToFutureOfString(JSAny? value) {
+Future<String> Function(String p0) _toDartFn1Of6StringTo14FutureOfString(JSAny? value) {
   if (value == null || !value.typeofEquals('function')) {
     _fail('a function', value);
   }
   final fn = value as JSFunction;
   return (String p0) => _toDartFutureOfString(fn.callMethodVarArgs<JSAny?>('call'.toJS, [null, p0.toJS]));
+}
+
+String Function($target.Ticket p0) _toDartFn1Of9RefTicketTo6String(JSAny? value) {
+  if (value == null || !value.typeofEquals('function')) {
+    _fail('a function', value);
+  }
+  final fn = value as JSFunction;
+  return ($target.Ticket p0) => _toDartString(fn.callMethodVarArgs<JSAny?>('call'.toJS, [null, _wrap_Ticket(p0)]));
 }
 
 Future<String> _toDartFutureOfString(JSAny? value) {
@@ -409,7 +409,7 @@ String _toDartString(JSAny? value) =>
     ? (value as JSString).toDart
     : _fail('a string', value);
 
-JSAny? _toJsFnIntToInt(int Function(int p0) value) =>
+JSAny? _toJsFn1Of3IntTo3Int(int Function(int p0) value) =>
     (([JSAny? $a0]) => value(_toDartInt($a0)).toJS).toJS;
 
 JSAny? _toJsFutureOfInt(Future<int> value) =>
@@ -434,25 +434,25 @@ JSAny? _toJsStreamOfRefTicket(Stream<$target.Ticket> value) =>
 
 void _install(JSObject target) {
   target['applyTwice'] = (([JSAny? $a0, JSAny? $a1]) {
-    return $target.applyTwice(_toDartInt($a0), _toDartFnIntToInt($a1)).toJS;
+    return $target.applyTwice(_toDartInt($a0), _toDartFn1Of3IntTo3Int($a1)).toJS;
   }).toJS;
   target['counter'] = (([JSAny? $a0]) {
     return _toJsStreamOfInt($target.counter(_toDartInt($a0)));
   }).toJS;
   target['describeVia'] = (([JSAny? $a0, JSAny? $a1]) {
-    return $target.describeVia(_unwrap_Ticket($a0), _toDartFnRefTicketToString($a1)).toJS;
+    return $target.describeVia(_unwrap_Ticket($a0), _toDartFn1Of9RefTicketTo6String($a1)).toJS;
   }).toJS;
   target['feedOf'] = (([JSAny? $a0]) {
     return _wrap_TicketFeed($target.feedOf(_toDartListOfString($a0)));
   }).toJS;
   target['greetVia'] = (([JSAny? $a0]) {
-    return _toJsFutureOfString($target.greetVia(_toDartFnStringToFutureOfString($a0)));
+    return _toJsFutureOfString($target.greetVia(_toDartFn1Of6StringTo14FutureOfString($a0)));
   }).toJS;
   target['issueTickets'] = (([JSAny? $a0]) {
     return _toJsStreamOfRefTicket($target.issueTickets(_toDartListOfString($a0)));
   }).toJS;
   target['makeAdder'] = (([JSAny? $a0]) {
-    return _toJsFnIntToInt($target.makeAdder(_toDartInt($a0)));
+    return _toJsFn1Of3IntTo3Int($target.makeAdder(_toDartInt($a0)));
   }).toJS;
   target['total'] = (([JSAny? $a0]) {
     return _toJsFutureOfInt($target.total(_toDartStreamOfInt($a0)));

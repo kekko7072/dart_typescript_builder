@@ -39,20 +39,28 @@ import 'model.dart';
 ///
 /// [globalExportKey] is the well-known `globalThis` property the exports
 /// object is installed under (unique per npm package name).
+///
+/// With [firestoreTypes], `dynamic` data additionally marshals the full
+/// firebase-admin Firestore value set: `Buffer`/`Uint8Array` <-> `Uint8List`
+/// (copied), and identity-preserving pass-through for `GeoPoint`,
+/// `DocumentReference`, `FieldValue` and `VectorValue`.
 String generateFacade(
   ApiModel api, {
   required String globalExportKey,
   DateTimeMode dateTimeMode = DateTimeMode.jsDate,
+  bool firestoreTypes = false,
 }) {
-  return _FacadeWriter(api, globalExportKey, dateTimeMode).write();
+  return _FacadeWriter(api, globalExportKey, dateTimeMode, firestoreTypes)
+      .write();
 }
 
 final class _FacadeWriter {
-  _FacadeWriter(this.api, this.globalExportKey, this.mode);
+  _FacadeWriter(this.api, this.globalExportKey, this.mode, this.firestoreTypes);
 
   final ApiModel api;
   final String globalExportKey;
   final DateTimeMode mode;
+  final bool firestoreTypes;
 
   /// Memoized conversion helpers, keyed (and emitted) by name so goldens are
   /// stable.
@@ -80,7 +88,11 @@ final class _FacadeWriter {
       ..writeln()
       ..writeln("import 'dart:async';")
       ..writeln("import 'dart:js_interop';")
-      ..writeln("import 'dart:js_interop_unsafe';")
+      ..writeln("import 'dart:js_interop_unsafe';");
+    if (firestoreTypes) {
+      buffer.writeln("import 'dart:typed_data';");
+    }
+    buffer
       ..writeln()
       ..writeln("import '${api.libraryUri}' as \$target;")
       ..writeln()
@@ -380,6 +392,84 @@ DateTime _dateTimeFromJs(JSAny? value) {
 ''');
     }
 
+    if (firestoreTypes) {
+      buffer.writeln('''
+// --firestore-types: the full firebase-admin Firestore value set crosses
+// inside `dynamic` data. The classes are injected by the package entry
+// module; any of them may be null when the installed firebase-admin does
+// not export it (older versions) — the duck-typed checks below still catch
+// GeoPoint and document references from foreign firebase-admin copies.
+@JS('__dtb_GeoPoint__')
+external JSAny? get _geoPointClass;
+
+@JS('__dtb_DocumentReference__')
+external JSAny? get _documentReferenceClass;
+
+@JS('__dtb_FieldValue__')
+external JSAny? get _fieldValueClass;
+
+@JS('__dtb_VectorValue__')
+external JSAny? get _vectorValueClass;
+
+/// Identity-preserving holder for a Firestore value with no Dart
+/// counterpart (GeoPoint, DocumentReference, FieldValue, VectorValue).
+/// Dart code can carry it inside dynamic data and hand it back; the exact
+/// same JS object is restored when the value crosses back to JS.
+final class _FirestoreValue {
+  _FirestoreValue(this.js);
+
+  final JSObject js;
+
+  @override
+  String toString() => 'FirestoreValue<\${_jsConstructorName(js)}>';
+}
+
+String _jsConstructorName(JSObject object) {
+  final ctor = object['constructor'];
+  if (ctor != null && ctor.isA<JSObject>()) {
+    final name = (ctor as JSObject)['name'];
+    if (name != null && name.typeofEquals('string')) {
+      return (name as JSString).toDart;
+    }
+  }
+  return 'unknown';
+}
+
+bool _fsInstanceOf(JSAny value, JSAny? jsClass) =>
+    jsClass != null &&
+    jsClass.isA<JSFunction>() &&
+    value.instanceof(jsClass as JSFunction);
+
+bool _isFsPassthroughValue(JSAny? value) {
+  if (value == null || !value.isA<JSObject>()) return false;
+  if (_fsInstanceOf(value, _geoPointClass) ||
+      _fsInstanceOf(value, _documentReferenceClass) ||
+      _fsInstanceOf(value, _fieldValueClass) ||
+      _fsInstanceOf(value, _vectorValueClass)) {
+    return true;
+  }
+  // Values from a different firebase-admin copy: duck-check the stable
+  // contracts. FieldValue/VectorValue sentinels have no usable duck
+  // surface — those need the injected class identity above.
+  final object = value as JSObject;
+  if (object.has('latitude') &&
+      object.has('longitude') &&
+      object.has('isEqual')) {
+    return true; // GeoPoint
+  }
+  if (object.has('firestore') && object.has('path') && object.has('id')) {
+    return true; // DocumentReference (or CollectionReference)
+  }
+  return false;
+}
+
+// Also matches Node's Buffer — a Uint8Array subclass, and what
+// firebase-admin returns for `bytes` document fields.
+bool _isJsUint8Array(JSAny? value) =>
+    value != null && value.instanceOfString('Uint8Array');
+''');
+    }
+
     // Deep converters for `dynamic` / `Object` values. Never uses
     // jsify/dartify: number semantics diverge between engines there.
     buffer.writeln('''
@@ -393,6 +483,12 @@ JSAny? _dynamicToJs(Object? value) =>
   if (value is num) return value.toJS;
   if (value is String) return value.toJS;
   if (value is DateTime) return _dateTimeToJs(value);''');
+    if (firestoreTypes) {
+      buffer.writeln('''
+  if (value is _FirestoreValue) return value.js;
+  // Before the Iterable branch: a Uint8List is also an Iterable<int>.
+  if (value is Uint8List) return Uint8List.fromList(value).toJS;''');
+    }
     for (final classApi in _runtimeClasses) {
       buffer.writeln(
         '  if (value is \$target.${classApi.name}) '
@@ -457,7 +553,15 @@ Object? _dynamicFromJs(JSAny? value) {
         _dynamicFromJs(item),
     ];
   }
-  if (_isJsDateTimeValue(value)) return _dateTimeFromJs(value);
+  if (_isJsDateTimeValue(value)) return _dateTimeFromJs(value);''');
+    if (firestoreTypes) {
+      buffer.writeln('''
+  if (_isJsUint8Array(value)) {
+    return Uint8List.fromList((value as JSUint8Array).toDart);
+  }
+  if (_isFsPassthroughValue(value)) return _FirestoreValue(value as JSObject);''');
+    }
+    buffer.writeln('''
   if (value.typeofEquals('function')) {
     _fail('a marshallable value (functions cannot cross the boundary)', value);
   }

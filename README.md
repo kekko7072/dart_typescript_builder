@@ -77,6 +77,7 @@ Flutter app.
 | `--module`       | `commonjs` \| `esm`     | `commonjs` (`esm` for wasm)      |
 | `--package-name` | npm name                | Dart name with `_` → `-`         |
 | `--datetime`     | `js-date` \| `firestore`| `js-date`                        |
+| `--firestore-types` | flag (off by default)| requires `--datetime firestore`  |
 
 The wasm engine is ESM-only and needs Node ≥ 22.
 
@@ -85,6 +86,30 @@ With `--datetime firestore`, Dart `DateTime` crosses as a Firestore
 microsecond fidelity) — for TypeScript backends running on Firebase. This
 also applies to `DateTime` values nested inside `dynamic` data, matching how
 the Dart Firebase SDKs treat `toMap()` documents.
+
+### `--firestore-types`: the full firebase-admin value set
+
+Firestore documents can hold more than JSON + timestamps. By default those
+extra values fail loudly at the boundary; opt in with `--firestore-types`
+(it requires `--datetime firestore` — the conversion is always an explicit
+choice) and every firebase-admin value survives inside `dynamic` data:
+
+| Firestore value in `unknown` data | Dart side                             |
+|-----------------------------------|---------------------------------------|
+| `Timestamp`                       | `DateTime` (microsecond fidelity)     |
+| `Buffer` / `Uint8Array` (bytes)   | `Uint8List` (copied; returns as a fresh `Uint8Array`) |
+| `GeoPoint`                        | opaque pass-through, identity kept    |
+| `DocumentReference`               | opaque pass-through, identity kept    |
+| `FieldValue` (`serverTimestamp()`, `increment()`, …) | opaque pass-through, identity kept |
+| `VectorValue`                     | opaque pass-through, identity kept    |
+
+Pass-through values cannot be inspected by Dart code — they ride along
+inside maps and lists and are handed back to JS as the exact same object,
+so a `snapshot.data()` containing them flows through `fromMap`/`toMap`
+logic unharmed. Older firebase-admin versions that don't export a class
+(e.g. `VectorValue` before 12.2) are tolerated: `GeoPoint` and document
+references are also recognized structurally, even from a different
+firebase-admin copy.
 
 ## What crosses the boundary
 
@@ -98,7 +123,7 @@ the Dart Firebase SDKs treat `toMap()` documents.
 | `Map<String, V>`         | `Record<string, V>`                           |
 | `Future<T>`              | `Promise<T>`                                  |
 | `DateTime`               | `Date` or Firestore `Timestamp` (`--datetime`)|
-| `dynamic`, `Object`      | `unknown` (deep-converted JSON-ish snapshot)  |
+| `dynamic`, `Object`      | `unknown` (deep-converted JSON-ish snapshot; `--firestore-types` adds bytes + firebase-admin pass-through) |
 | named parameters         | trailing options object                       |
 | `enum`                   | string-literal union (values cross by name)   |
 | function types           | `(p0: T) => R` — callbacks in both directions |

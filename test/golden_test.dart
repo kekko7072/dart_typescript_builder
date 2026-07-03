@@ -134,6 +134,19 @@ void main() {
       );
     });
 
+    test('facade matches golden (firestore-types)', () {
+      _expectGolden(
+        generateFacade(
+          firestoreApi,
+          globalExportKey: '__dtb_exports_boundary_logic__',
+          dateTimeMode: DateTimeMode.firestoreTimestamp,
+          firestoreTypes: true,
+        ),
+        'boundary_logic/facade.firestore-types.dart',
+        update: update,
+      );
+    });
+
     test('.d.ts matches golden (js-date)', () {
       _expectGolden(
         generateDts(api),
@@ -146,6 +159,14 @@ void main() {
       _expectGolden(
         generateDts(firestoreApi),
         'boundary_logic/index.firestore.d.ts',
+        update: update,
+      );
+    });
+
+    test('.d.ts matches golden (firestore-types)', () {
+      _expectGolden(
+        generateDts(firestoreApi, firestoreTypes: true),
+        'boundary_logic/index.firestore-types.d.ts',
         update: update,
       );
     });

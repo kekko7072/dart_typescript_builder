@@ -173,6 +173,68 @@ console.log("ALL_ASSERTIONS_PASSED");
 ''';
 
 // ---------------------------------------------------------------------------
+// boundary_logic with --firestore-types (full firebase-admin value set)
+// ---------------------------------------------------------------------------
+
+const _firestoreTypesConsumerTs = '''
+import {
+  Timestamp, GeoPoint, DocumentReference, FieldValue,
+} from "firebase-admin/firestore";
+import { annotate, createNote, Note } from "boundary-logic";
+
+// Available at runtime under Node; typed by @types/node in real projects.
+declare const Buffer: { from(data: number[]): Uint8Array };
+
+function assertEqual(actual: unknown, expected: unknown, label: string): void {
+  if (actual !== expected) {
+    throw new Error(label + ": expected " + expected + ", got " + actual);
+  }
+}
+
+const geo = new GeoPoint(45.4, 11.9);
+const ref = new DocumentReference({}, "users/u1");
+const sentinel = FieldValue.serverTimestamp();
+const bytes = new Uint8Array([1, 2, 3]);
+
+const out = annotate({
+  location: geo,
+  owner: ref,
+  updatedAt: sentinel,
+  payload: bytes,
+  at: Timestamp.fromMillis(9000),
+}) as Record<string, unknown>;
+
+assertEqual(out.seen, true, "annotate ran Dart-side");
+assertEqual(out.location === geo, true, "GeoPoint identity");
+assertEqual(out.owner === ref, true, "DocumentReference identity");
+assertEqual(out.updatedAt === sentinel, true, "FieldValue identity");
+assertEqual(out.at instanceof Timestamp, true, "Timestamp class");
+assertEqual((out.at as Timestamp).toMillis(), 9000, "Timestamp value");
+const echoed = out.payload as Uint8Array;
+assertEqual(echoed instanceof Uint8Array, true, "bytes class");
+assertEqual(echoed === bytes, false, "bytes are a fresh copy");
+assertEqual(Array.from(echoed).join(","), "1,2,3", "bytes content");
+
+// Node Buffer (what firebase-admin returns for `bytes` fields) is a
+// Uint8Array subclass and must cross the same way.
+const viaBuffer = annotate({ b: Buffer.from([7, 8]) }) as
+  Record<string, unknown>;
+assertEqual(Array.from(viaBuffer.b as Uint8Array).join(","), "7,8",
+  "Buffer bytes");
+
+// The values also survive storage inside a Dart object's dynamic map.
+const note: Note = createNote("n", { createdAt: Timestamp.fromMillis(0) });
+note.meta = { location: geo, updatedAt: sentinel };
+assertEqual((note.meta as Record<string, unknown>).location === geo, true,
+  "meta GeoPoint identity");
+const map = note.toMap() as Record<string, unknown>;
+assertEqual((map.meta as Record<string, unknown>).location === geo, true,
+  "toMap meta identity");
+
+console.log("ALL_ASSERTIONS_PASSED");
+''';
+
+// ---------------------------------------------------------------------------
 // edge_logic (hostile names, adversarial-review regressions)
 // ---------------------------------------------------------------------------
 
@@ -544,6 +606,56 @@ console.log("ESM_OK");
     );
   });
 
+  group('boundary_logic / firestore-types', () {
+    for (final engine in ['dart2js', 'wasm']) {
+      test(
+        '$engine: firebase-admin values cross inside dynamic data',
+        () async {
+          ensureFixtureResolved('boundary_logic');
+          final dist = freshTmpDir('fstypes-$engine/dist');
+          final built = await buildNpmPackage(
+            BuildOptions(
+              packagePath: fixturePath('boundary_logic'),
+              outputPath: dist.path,
+              engine: engine,
+              npmPackageName: 'boundary-logic',
+              dateTimeMode: DateTimeMode.firestoreTimestamp,
+              firestoreTypes: true,
+              runNpmInstall: false,
+            ),
+          );
+          _npmTscNode(
+            'fstypes-$engine',
+            built,
+            esm: engine == 'wasm',
+            consumerTs: _firestoreTypesConsumerTs,
+            withFirebaseAdminStub: true,
+          );
+        },
+        skip: toolchain ? false : 'needs node, npm and tsc',
+      );
+    }
+
+    test('is rejected without --datetime firestore', () {
+      expect(
+        () => buildNpmPackage(
+          BuildOptions(
+            packagePath: fixturePath('boundary_logic'),
+            outputPath: 'unused',
+            firestoreTypes: true,
+          ),
+        ),
+        throwsA(
+          isA<BuildException>().having(
+            (e) => e.message,
+            'message',
+            contains('--datetime firestore'),
+          ),
+        ),
+      );
+    });
+  });
+
   group('tomorrowtech_user acceptance', () {
     const targetPath =
         '/Users/francescovezzani/Developer/TomorrowTech/software/packages/tomorrowtech_user';
@@ -564,6 +676,11 @@ console.log("ESM_OK");
               engine: engine,
               npmPackageName: 'tomorrowtech-user',
               dateTimeMode: DateTimeMode.firestoreTimestamp,
+              // Keep the suite offline AND single-copy: a default npm
+              // install would fetch the real firebase-admin peer into the
+              // package's own node_modules, shadowing the stub written next
+              // to it — a second Timestamp class identity.
+              runNpmInstall: false,
             ),
           );
           _writeFirebaseAdminStub(p.join(root.path, 'node_modules'));
@@ -709,7 +826,45 @@ class Timestamp {
       other._nanoseconds === this._nanoseconds;
   }
 }
-module.exports = { Timestamp };
+class GeoPoint {
+  constructor(latitude, longitude) {
+    this._latitude = latitude;
+    this._longitude = longitude;
+  }
+  get latitude() { return this._latitude; }
+  get longitude() { return this._longitude; }
+  isEqual(other) {
+    return other instanceof GeoPoint &&
+      other._latitude === this._latitude &&
+      other._longitude === this._longitude;
+  }
+}
+class DocumentReference {
+  constructor(firestore, path) {
+    this.firestore = firestore ?? {};
+    this.path = path;
+  }
+  get id() {
+    const parts = this.path.split("/");
+    return parts[parts.length - 1];
+  }
+  get() { return Promise.reject(new Error("offline stub")); }
+  set() { return Promise.reject(new Error("offline stub")); }
+  listCollections() { return Promise.resolve([]); }
+}
+class FieldValue {
+  constructor(methodName) { this._methodName = methodName; }
+  static serverTimestamp() { return new FieldValue("serverTimestamp"); }
+  static increment(n) { return new FieldValue("increment"); }
+  static delete() { return new FieldValue("delete"); }
+  isEqual(other) {
+    return other instanceof FieldValue &&
+      other._methodName === this._methodName;
+  }
+}
+// VectorValue is deliberately absent: firebase-admin < 12.2 does not export
+// it, and the generated packages must tolerate that.
+module.exports = { Timestamp, GeoPoint, DocumentReference, FieldValue };
 ''');
   File(p.join(root.path, 'index.d.ts')).writeAsStringSync('''
 export declare class Timestamp {
@@ -722,6 +877,27 @@ export declare class Timestamp {
   toMillis(): number;
   toDate(): Date;
   isEqual(other: Timestamp): boolean;
+}
+export declare class GeoPoint {
+  constructor(latitude: number, longitude: number);
+  readonly latitude: number;
+  readonly longitude: number;
+  isEqual(other: GeoPoint): boolean;
+}
+export declare class DocumentReference {
+  constructor(firestore: unknown, path: string);
+  readonly firestore: unknown;
+  readonly path: string;
+  readonly id: string;
+  get(): Promise<unknown>;
+  set(data: unknown): Promise<unknown>;
+  listCollections(): Promise<unknown[]>;
+}
+export declare class FieldValue {
+  static serverTimestamp(): FieldValue;
+  static increment(n: number): FieldValue;
+  static delete(): FieldValue;
+  isEqual(other: FieldValue): boolean;
 }
 ''');
 }

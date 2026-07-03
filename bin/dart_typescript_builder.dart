@@ -50,6 +50,16 @@ void main(List<String> arguments) async {
               'Timestamp from firebase-admin (for Firebase backends).',
         )
         ..addFlag(
+          'firestore-types',
+          negatable: false,
+          help:
+              'Marshal the full firebase-admin Firestore value set inside '
+              'dynamic data: Buffer/Uint8Array <-> Uint8List (copied), and '
+              'identity-preserving pass-through for GeoPoint, '
+              'DocumentReference, FieldValue and VectorValue. '
+              'Requires --datetime firestore.',
+        )
+        ..addFlag(
           'npm-install',
           defaultsTo: true,
           help:
@@ -91,6 +101,7 @@ void main(List<String> arguments) async {
             : ModuleFormat.parse(command['module'] as String),
         npmPackageName: command['package-name'] as String?,
         dateTimeMode: DateTimeMode.parse(command['datetime'] as String),
+        firestoreTypes: command['firestore-types'] as bool,
         runNpmInstall: command['npm-install'] as bool,
         verbose: command['verbose'] as bool,
       ),

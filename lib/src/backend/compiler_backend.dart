@@ -41,6 +41,7 @@ final class BackendBuildRequest {
     required this.api,
     required this.globalExportKey,
     required this.verbose,
+    this.firestoreTypes = false,
   });
 
   /// Absolute path of the generated facade entrypoint. Lives inside the
@@ -63,6 +64,11 @@ final class BackendBuildRequest {
   final String globalExportKey;
 
   final bool verbose;
+
+  /// Whether the entry module must inject the full firebase-admin Firestore
+  /// value classes (GeoPoint, DocumentReference, FieldValue, VectorValue)
+  /// alongside Timestamp (`--firestore-types`).
+  final bool firestoreTypes;
 }
 
 /// What a backend produced: the runtime files it wrote into the output
@@ -79,6 +85,34 @@ final class BackendOutput {
 
   /// Backend-specific `package.json` fields (`type`, `engines`, ...).
   final Map<String, Object?> packageJsonFields;
+}
+
+/// Writes the `--firestore-types` class injection into an ESM entry module.
+///
+/// Uses a namespace import on purpose: a *named* import of an export that a
+/// (CommonJS) firebase-admin copy does not provide fails at load time, while
+/// a missing namespace member is just `undefined` — which the facade treats
+/// as "class not available" and falls back to duck-typed checks.
+void writeEsmFirestoreValueInjection(
+  StringBuffer buffer,
+  BackendBuildRequest request,
+) {
+  if (!request.firestoreTypes) return;
+  buffer
+    ..writeln(
+      'import * as __dtb\$fsValues from "firebase-admin/firestore";',
+    )
+    ..writeln('// Full Firestore value support (--firestore-types): inject')
+    ..writeln('// the classes the compiled Dart program recognizes. Entries')
+    ..writeln('// missing from older firebase-admin versions stay undefined')
+    ..writeln('// (duck-typed fallbacks still apply where possible).')
+    ..writeln('globalThis.__dtb_GeoPoint__ = __dtb\$fsValues.GeoPoint;')
+    ..writeln(
+      'globalThis.__dtb_DocumentReference__ = '
+      '__dtb\$fsValues.DocumentReference;',
+    )
+    ..writeln('globalThis.__dtb_FieldValue__ = __dtb\$fsValues.FieldValue;')
+    ..writeln('globalThis.__dtb_VectorValue__ = __dtb\$fsValues.VectorValue;');
 }
 
 /// A compiler engine: compiles the generated facade and emits the Node

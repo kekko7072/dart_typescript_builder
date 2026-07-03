@@ -1,3 +1,26 @@
+## 0.4.0
+
+- New `--firestore-types` flag (opt-in, requires `--datetime firestore` —
+  the conversion is always an explicit user choice): the full firebase-admin
+  Firestore value set crosses inside `dynamic` data. `Buffer`/`Uint8Array`
+  (bytes fields) converts to Dart `Uint8List` and back (copied snapshots,
+  fresh `Uint8Array` on the way out); `GeoPoint`, `DocumentReference`,
+  `FieldValue` sentinels and `VectorValue` pass through opaquely with JS
+  identity preserved, so documents containing them survive `fromMap`/`toMap`
+  round trips instead of failing at the boundary. Class identities are
+  injected by the entry module; `GeoPoint` and document references are also
+  duck-typed so values from a different firebase-admin copy still cross.
+  Older firebase-admin versions missing an export (e.g. `VectorValue`) are
+  tolerated. Available on both engines and from the library API
+  (`BuildOptions.firestoreTypes`).
+- Regenerated the stale `async_logic` goldens (the 0.3.0 hardening pass
+  changed callback helper mangles and callback type parenthesization
+  without refreshing them).
+- The tomorrowtech acceptance test now builds with `runNpmInstall: false`:
+  the default install fetched the real firebase-admin peer into the built
+  package, shadowing the offline stub with a second Timestamp class
+  identity.
+
 ## 0.3.0
 
 Phase 3 + Phase 4. Both engines.
