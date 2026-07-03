@@ -1,0 +1,5 @@
+name: boundary_logic
+description: Fixture package exercising the Phase 2 boundary of dart_typescript_builder.
+version: 0.2.0
+environment:
+  sdk: ^3.5.0

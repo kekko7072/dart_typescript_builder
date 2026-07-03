@@ -14,42 +14,60 @@ void main() {
     return analyzePackage(readTargetPackage(fixturePath(name)));
   }
 
-  test(
-    'List parameter -> Unsupported with file:line and Phase 2 hint',
-    () async {
-      await expectLater(
-        analyzeFixture('unsupported_list'),
-        throwsA(
-          isA<UnsupportedApiException>().having(
-            (e) => e.message,
-            'message',
-            allOf(
-              startsWith(
-                "Unsupported: type 'List<int>' in parameter 'values' "
-                "of function 'sum' at ",
-              ),
-              matches(r'unsupported_list\.dart:2'),
-              contains('Phase 2'),
-            ),
-          ),
-        ),
-      );
-    },
-  );
-
-  test('named parameter -> Unsupported', () async {
+  test('function-typed parameter -> Unsupported with file:line', () async {
     await expectLater(
-      analyzeFixture('unsupported_named'),
+      analyzeFixture('unsupported_callback'),
       throwsA(
         isA<UnsupportedApiException>().having(
           (e) => e.message,
           'message',
           allOf(
             startsWith(
-              "Unsupported: named parameter 'width' of function "
-              "'pad' at ",
+              "Unsupported: function type 'int Function(int)' in parameter "
+              "'transform' of function 'apply' at ",
             ),
-            matches(r'unsupported_named\.dart:2'),
+            matches(r'unsupported_callback\.dart:2'),
+            contains('callback marshalling'),
+          ),
+        ),
+      ),
+    );
+  });
+
+  test('Stream outside an abstract contract -> Unsupported', () async {
+    await expectLater(
+      analyzeFixture('unsupported_stream'),
+      throwsA(
+        isA<UnsupportedApiException>().having(
+          (e) => e.message,
+          'message',
+          allOf(
+            startsWith(
+              "Unsupported: type 'Stream<int>' in return type of function "
+              "'ticks' at ",
+            ),
+            matches(r'unsupported_stream\.dart:2'),
+            contains('Phase 4'),
+          ),
+        ),
+      ),
+    );
+  });
+
+  test('non-literal default value -> Unsupported', () async {
+    await expectLater(
+      analyzeFixture('unsupported_default'),
+      throwsA(
+        isA<UnsupportedApiException>().having(
+          (e) => e.message,
+          'message',
+          allOf(
+            startsWith(
+              "Unsupported: default value `kWidth` of parameter 'width' of "
+              "function 'pad' is not an inlinable literal at ",
+            ),
+            matches(r'unsupported_default\.dart:4'),
+            contains('literal defaults'),
           ),
         ),
       ),

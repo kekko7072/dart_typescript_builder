@@ -1,4 +1,4 @@
-/// End-to-end proof (the "definition of done"): build the fixture with each
+/// End-to-end proof (the "definition of done"): build fixtures with each
 /// engine, `npm install` the result into a small TypeScript project, verify
 /// `tsc` type-checks the usage (and rejects bad usage), and run it under
 /// Node asserting runtime results.
@@ -13,7 +13,11 @@ import 'package:test/test.dart';
 
 import 'helpers.dart';
 
-const _consumerTs = '''
+// ---------------------------------------------------------------------------
+// hello_logic (Phase 1 surface)
+// ---------------------------------------------------------------------------
+
+const _helloConsumerTs = '''
 import { add, greet, half, isEven, createCounter, Counter } from "hello-logic";
 
 function assertEqual(actual: unknown, expected: unknown, label: string): void {
@@ -40,7 +44,7 @@ console.log("ALL_ASSERTIONS_PASSED");
 ''';
 
 // Must NOT type-check: wrong argument type, assignment to readonly property.
-const _badConsumerTs = '''
+const _helloBadConsumerTs = '''
 import { add, createCounter } from "hello-logic";
 
 add("two", 3);
@@ -48,20 +52,147 @@ const c = createCounter("x", 0);
 c.label = "renamed";
 ''';
 
+// ---------------------------------------------------------------------------
+// boundary_logic (Phase 2 surface, js-date mode)
+// ---------------------------------------------------------------------------
+
+const _boundaryConsumerTs = '''
+import {
+  kDefaultLimit, kLocales, sum, shout, lengths, annotate,
+  delayedGreet, doubleEventually, addDays, maybeLength, pad, repeat,
+  createNote, createNotebook, Note, Notebook, NoteRepository,
+} from "boundary-logic";
+
+function assertEqual(actual: unknown, expected: unknown, label: string): void {
+  if (actual !== expected) {
+    throw new Error(label + ": expected " + expected + ", got " + actual);
+  }
+}
+
+async function main(): Promise<void> {
+  assertEqual(kDefaultLimit, 10, "kDefaultLimit");
+  assertEqual(kLocales.join(","), "en,it", "kLocales");
+  assertEqual(sum([1, 2, 3]), 6, "sum");
+  assertEqual(shout(["a", null, "b"]).join("|"), "A||B", "shout");
+  assertEqual(lengths(["ciao", "hi"]).ciao, 4, "lengths");
+  const annotated = annotate({ a: 1 }) as Record<string, unknown>;
+  assertEqual(annotated.seen, true, "annotate");
+  assertEqual(annotate(7), 7, "annotate passthrough");
+  assertEqual(await delayedGreet("F", 5), "Hello, F!", "delayedGreet");
+  assertEqual(await doubleEventually(Promise.resolve(21)), 42, "doubleEventually");
+  const d: Date = addDays(new Date(1720000000000), 1);
+  assertEqual(d.getTime(), 1720000000000 + 86400000, "addDays");
+  assertEqual(maybeLength("ciao"), 4, "maybeLength");
+  assertEqual(maybeLength(null), null, "maybeLength null");
+  assertEqual(pad("7", { width: 3 }), "..7", "pad");
+  assertEqual(pad("7", { width: 3, fill: "0" }), "007", "pad fill");
+  assertEqual(repeat("ab"), "abab", "repeat default");
+  assertEqual(repeat("ab", 3), "ababab", "repeat");
+
+  const note: Note = createNote("groceries", {
+    createdAt: new Date(0),
+    tags: ["home"],
+  });
+  note.title = "food";
+  assertEqual(note.tag("urgent").title, "food", "tag chain");
+  assertEqual(note.tag("x") === note, true, "handle identity");
+  const map = note.toMap();
+  assertEqual((map.tags as string[]).length, 3, "toMap tags");
+
+  const nb: Notebook = createNotebook("main");
+  nb.add(note);
+  const found: Note | null = nb.find("food");
+  assertEqual(found === note, true, "identity through collections");
+  assertEqual(nb.find("nope"), null, "find null");
+  const loaded: Note[] = await nb.load();
+  assertEqual(loaded.length, 1, "load");
+
+  const rebuilt: Note = Note.fromMap({
+    title: "t",
+    createdAt: new Date(0),
+    tags: [],
+  });
+  assertEqual(rebuilt.title, "t", "static fromMap");
+  const many: Note[] = Note.listFromMaps([note.toMap(), rebuilt.toMap()]);
+  assertEqual(many.length, 2, "listFromMaps");
+  assertEqual(typeof Note.template.title, "string", "live static getter");
+
+  // The Stream-bearing contract exists purely as a TS interface: implement
+  // it TS-side with AsyncIterable.
+  const repo: NoteRepository = {
+    getByTitle: async (title: string) => nb.find(title),
+    watchAll: async function* () {
+      yield nb.all();
+    },
+    save: async () => {},
+  };
+  const got = await repo.getByTitle("food");
+  assertEqual(got === note, true, "TS-implemented contract");
+
+  console.log("ALL_ASSERTIONS_PASSED");
+}
+
+void main();
+''';
+
+// Must NOT type-check: wrong element type, missing required option,
+// readonly write.
+const _boundaryBadConsumerTs = '''
+import { sum, pad, createNote } from "boundary-logic";
+
+sum(["not", "numbers"]);
+pad("x", {});
+const n = createNote("t", { createdAt: new Date(0) });
+n.createdAt = new Date(1);
+''';
+
+// ---------------------------------------------------------------------------
+// boundary_logic in firestore mode (DateTime <-> firebase-admin Timestamp)
+// ---------------------------------------------------------------------------
+
+const _firestoreConsumerTs = '''
+import { Timestamp } from "firebase-admin/firestore";
+import { addDays, createNote, Note } from "boundary-logic";
+
+function assertEqual(actual: unknown, expected: unknown, label: string): void {
+  if (actual !== expected) {
+    throw new Error(label + ": expected " + expected + ", got " + actual);
+  }
+}
+
+const later: Timestamp = addDays(new Timestamp(1720000000, 123456000), 1);
+assertEqual(later.seconds, 1720000000 + 86400, "addDays seconds");
+assertEqual(later.nanoseconds, 123456000, "microsecond fidelity");
+
+const note: Note = createNote("n", { createdAt: Timestamp.fromMillis(9000) });
+const round: Note = Note.fromMap(note.toMap());
+assertEqual(round.createdAt.toMillis(), 9000, "toMap/fromMap round trip");
+assertEqual(note.toMap().createdAt instanceof Timestamp, true, "dynamic map");
+
+console.log("ALL_ASSERTIONS_PASSED");
+''';
+
 void main() {
   final hasNode = _canRun('node', ['--version']);
   final hasNpm = _canRun('npm', ['--version']);
   final hasTsc = _canRun('tsc', ['--version']);
+  final toolchain = hasNode && hasNpm && hasTsc;
 
-  Future<BuildResult> build(String label, String engine) async {
-    ensureFixtureResolved('hello_logic');
+  Future<BuildResult> build(
+    String label,
+    String fixture,
+    String engine, {
+    DateTimeMode dateTimeMode = DateTimeMode.jsDate,
+  }) async {
+    ensureFixtureResolved(fixture);
     final dist = freshTmpDir('$label/dist');
     final result = await buildNpmPackage(
       BuildOptions(
-        packagePath: fixturePath('hello_logic'),
+        packagePath: fixturePath(fixture),
         outputPath: dist.path,
         engine: engine,
-        npmPackageName: 'hello-logic',
+        npmPackageName: fixture.replaceAll('_', '-'),
+        dateTimeMode: dateTimeMode,
       ),
     );
     for (final file in result.files) {
@@ -74,79 +205,11 @@ void main() {
     return result;
   }
 
-  /// Sets up the consumer project, npm-installs the built package, runs tsc
-  /// and executes the compiled consumer under Node.
-  void npmTscNode(String label, BuildResult built, {required bool esm}) {
-    final consumer = freshTmpDir('$label/consumer');
-    File(p.join(consumer.path, 'package.json')).writeAsStringSync('''
-{
-  "name": "consumer",
-  "private": true,
-  ${esm ? '"type": "module",' : ''}
-  "dependencies": { "hello-logic": "file:${built.outputDir}" }
-}
-''');
-    File(p.join(consumer.path, 'tsconfig.json')).writeAsStringSync(
-      esm
-          ? '''
-{
-  "compilerOptions": {
-    "module": "nodenext",
-    "moduleResolution": "nodenext",
-    "target": "es2022",
-    "strict": true,
-    "noEmitOnError": true
-  },
-  "files": ["consumer.ts"]
-}
-'''
-          : '''
-{
-  "compilerOptions": {
-    "module": "commonjs",
-    "moduleResolution": "node",
-    "target": "es2020",
-    "strict": true,
-    "esModuleInterop": true,
-    "noEmitOnError": true
-  },
-  "files": ["consumer.ts"]
-}
-''',
-    );
-    File(p.join(consumer.path, 'consumer.ts')).writeAsStringSync(_consumerTs);
-
-    _runChecked('npm', ['install', '--no-audit', '--no-fund'], consumer.path);
-    _runChecked('tsc', ['-p', '.'], consumer.path);
-    final run = _runChecked('node', ['consumer.js'], consumer.path);
-    expect(run.stdout, contains('ALL_ASSERTIONS_PASSED'));
-
-    // Bad usage must be rejected by the generated declarations.
-    File(
-      p.join(consumer.path, 'consumer.ts'),
-    ).writeAsStringSync(_badConsumerTs);
-    final bad = Process.runSync(
-      'tsc',
-      ['-p', '.'],
-      workingDirectory: consumer.path,
-      runInShell: true,
-    );
-    expect(
-      bad.exitCode,
-      isNot(0),
-      reason:
-          'tsc must reject wrong argument types and readonly writes,'
-          ' got:\n${bad.stdout}',
-    );
-    expect(bad.stdout.toString(), contains('consumer.ts'));
-  }
-
-  group('dart2js engine (commonjs)', () {
+  group('hello_logic / dart2js (commonjs)', () {
     test(
       'build -> npm install -> tsc -> node',
       () async {
-        final built = await build('js-cjs', 'dart2js');
-        expect(built.engineId, 'dart2js');
+        final built = await build('js-cjs', 'hello_logic', 'dart2js');
         expect(built.api.exportedNames, [
           'add',
           'greet',
@@ -154,13 +217,19 @@ void main() {
           'isEven',
           'createCounter',
         ]);
-        npmTscNode('js-cjs', built, esm: false);
+        _npmTscNode(
+          'js-cjs',
+          built,
+          esm: false,
+          consumerTs: _helloConsumerTs,
+          badConsumerTs: _helloBadConsumerTs,
+        );
       },
-      skip: hasNode && hasNpm && hasTsc ? false : 'needs node, npm and tsc',
+      skip: toolchain ? false : 'needs node, npm and tsc',
     );
   });
 
-  group('dart2js engine (esm)', () {
+  group('hello_logic / dart2js (esm)', () {
     test('build -> node named imports', () async {
       ensureFixtureResolved('hello_logic');
       final dist = freshTmpDir('js-esm/dist');
@@ -185,18 +254,303 @@ console.log("ESM_OK");
     }, skip: hasNode ? false : 'needs node');
   });
 
-  group('wasm engine (esm)', () {
+  group('hello_logic / wasm (esm)', () {
     test(
       'build -> npm install -> tsc -> node',
       () async {
-        final built = await build('wasm', 'wasm');
-        expect(built.engineId, 'wasm');
-        npmTscNode('wasm', built, esm: true);
+        final built = await build('wasm', 'hello_logic', 'wasm');
+        _npmTscNode(
+          'wasm',
+          built,
+          esm: true,
+          consumerTs: _helloConsumerTs,
+          badConsumerTs: _helloBadConsumerTs,
+        );
       },
-      skip: hasNode && hasNpm && hasTsc ? false : 'needs node, npm and tsc',
+      skip: toolchain ? false : 'needs node, npm and tsc',
     );
   });
+
+  group('boundary_logic / dart2js (commonjs)', () {
+    test(
+      'build -> npm install -> tsc -> node',
+      () async {
+        final built = await build('boundary-cjs', 'boundary_logic', 'dart2js');
+        _npmTscNode(
+          'boundary-cjs',
+          built,
+          esm: false,
+          consumerTs: _boundaryConsumerTs,
+          badConsumerTs: _boundaryBadConsumerTs,
+        );
+      },
+      skip: toolchain ? false : 'needs node, npm and tsc',
+    );
+  });
+
+  group('boundary_logic / wasm (esm)', () {
+    test(
+      'build -> npm install -> tsc -> node',
+      () async {
+        final built = await build('boundary-wasm', 'boundary_logic', 'wasm');
+        _npmTscNode(
+          'boundary-wasm',
+          built,
+          esm: true,
+          consumerTs: _boundaryConsumerTs,
+          badConsumerTs: _boundaryBadConsumerTs,
+        );
+      },
+      skip: toolchain ? false : 'needs node, npm and tsc',
+    );
+  });
+
+  group('boundary_logic / firestore mode', () {
+    test(
+      'DateTime crosses as firebase-admin Timestamp',
+      () async {
+        final built = await build(
+          'boundary-fs',
+          'boundary_logic',
+          'dart2js',
+          dateTimeMode: DateTimeMode.firestoreTimestamp,
+        );
+        expect(built.api.usesFirestoreTimestamp, isTrue);
+        _npmTscNode(
+          'boundary-fs',
+          built,
+          esm: false,
+          consumerTs: _firestoreConsumerTs,
+          withFirebaseAdminStub: true,
+        );
+      },
+      skip: toolchain ? false : 'needs node, npm and tsc',
+    );
+  });
+
+  group('tomorrowtech_user acceptance', () {
+    const targetPath =
+        '/Users/francescovezzani/Developer/TomorrowTech/software/packages/tomorrowtech_user';
+    final available = Directory(targetPath).existsSync();
+
+    for (final engine in ['dart2js', 'wasm']) {
+      test(
+        '$engine + firestore: fromMap/toMap round trip',
+        () async {
+          final root = freshTmpDir('ttuser-$engine');
+          final dist = Directory(
+            p.join(root.path, 'node_modules', 'tomorrowtech-user'),
+          )..createSync(recursive: true);
+          await buildNpmPackage(
+            BuildOptions(
+              packagePath: targetPath,
+              outputPath: dist.path,
+              engine: engine,
+              npmPackageName: 'tomorrowtech-user',
+              dateTimeMode: DateTimeMode.firestoreTimestamp,
+            ),
+          );
+          _writeFirebaseAdminStub(p.join(root.path, 'node_modules'));
+          final script = p.join(root.path, 'check.mjs');
+          File(script).writeAsStringSync(_tomorrowtechCheckMjs);
+          final run = _runChecked('node', ['check.mjs'], root.path);
+          expect(run.stdout, contains('TOMORROWTECH_USER_OK'));
+        },
+        skip: available && hasNode ? false : 'needs $targetPath and node',
+      );
+    }
+  });
 }
+
+/// Sets up the consumer project, npm-installs the built package, runs tsc
+/// (accepting good usage, rejecting bad usage) and executes the compiled
+/// consumer under Node.
+void _npmTscNode(
+  String label,
+  BuildResult built, {
+  required bool esm,
+  required String consumerTs,
+  String? badConsumerTs,
+  bool withFirebaseAdminStub = false,
+}) {
+  final consumer = freshTmpDir('$label/consumer');
+  File(p.join(consumer.path, 'package.json')).writeAsStringSync('''
+{
+  "name": "consumer",
+  "private": true,
+  ${esm ? '"type": "module",' : ''}
+  "dependencies": { "${built.npmName}": "file:${built.outputDir}" }
+}
+''');
+  File(p.join(consumer.path, 'tsconfig.json')).writeAsStringSync(
+    esm
+        ? '''
+{
+  "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "es2022",
+    "strict": true,
+    "noEmitOnError": true
+  },
+  "files": ["consumer.ts"]
+}
+'''
+        : '''
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "target": "es2020",
+    "strict": true,
+    "esModuleInterop": true,
+    "noEmitOnError": true
+  },
+  "files": ["consumer.ts"]
+}
+''',
+  );
+  File(p.join(consumer.path, 'consumer.ts')).writeAsStringSync(consumerTs);
+
+  _runChecked('npm', [
+    'install',
+    '--no-audit',
+    '--no-fund',
+    // Peer dependencies (firebase-admin) are satisfied by the local stub,
+    // never from the registry: keeps the suite offline.
+    '--legacy-peer-deps',
+    // Copy instead of symlinking so the installed package resolves the peer
+    // stub from the consumer's node_modules — a single Timestamp class
+    // identity, like a real deployment.
+    '--install-links',
+  ], consumer.path);
+  if (withFirebaseAdminStub) {
+    _writeFirebaseAdminStub(p.join(consumer.path, 'node_modules'));
+  }
+  _runChecked('tsc', ['-p', '.'], consumer.path);
+  final run = _runChecked('node', ['consumer.js'], consumer.path);
+  expect(run.stdout, contains('ALL_ASSERTIONS_PASSED'));
+
+  if (badConsumerTs != null) {
+    File(p.join(consumer.path, 'consumer.ts')).writeAsStringSync(badConsumerTs);
+    final bad = Process.runSync(
+      'tsc',
+      ['-p', '.'],
+      workingDirectory: consumer.path,
+      runInShell: true,
+    );
+    expect(
+      bad.exitCode,
+      isNot(0),
+      reason:
+          'tsc must reject wrong argument types and readonly writes,'
+          ' got:\n${bad.stdout}',
+    );
+    expect(bad.stdout.toString(), contains('consumer.ts'));
+  }
+}
+
+/// A minimal, faithful offline stub of `firebase-admin/firestore` exposing
+/// the `Timestamp` contract (the real package would be fetched from the
+/// registry; the boundary only relies on the documented Timestamp API).
+void _writeFirebaseAdminStub(String nodeModulesPath) {
+  final root = Directory(p.join(nodeModulesPath, 'firebase-admin', 'firestore'))
+    ..createSync(recursive: true);
+  File(
+    p.join(nodeModulesPath, 'firebase-admin', 'package.json'),
+  ).writeAsStringSync('''
+{
+  "name": "firebase-admin",
+  "version": "13.0.0-stub",
+  "description": "Offline test stub exposing the Timestamp contract.",
+  "exports": {
+    "./firestore": {
+      "types": "./firestore/index.d.ts",
+      "default": "./firestore/index.js"
+    }
+  }
+}
+''');
+  File(p.join(root.path, 'index.js')).writeAsStringSync('''
+class Timestamp {
+  constructor(seconds, nanoseconds) {
+    this._seconds = seconds;
+    this._nanoseconds = nanoseconds;
+  }
+  get seconds() { return this._seconds; }
+  get nanoseconds() { return this._nanoseconds; }
+  static fromMillis(ms) {
+    const seconds = Math.floor(ms / 1000);
+    return new Timestamp(seconds, Math.round((ms - seconds * 1000) * 1e6));
+  }
+  static fromDate(date) { return Timestamp.fromMillis(date.getTime()); }
+  static now() { return Timestamp.fromMillis(Date.now()); }
+  toMillis() { return this._seconds * 1000 + this._nanoseconds / 1e6; }
+  toDate() { return new Date(this.toMillis()); }
+  isEqual(other) {
+    return other instanceof Timestamp &&
+      other._seconds === this._seconds &&
+      other._nanoseconds === this._nanoseconds;
+  }
+}
+module.exports = { Timestamp };
+''');
+  File(p.join(root.path, 'index.d.ts')).writeAsStringSync('''
+export declare class Timestamp {
+  constructor(seconds: number, nanoseconds: number);
+  readonly seconds: number;
+  readonly nanoseconds: number;
+  static fromMillis(milliseconds: number): Timestamp;
+  static fromDate(date: Date): Timestamp;
+  static now(): Timestamp;
+  toMillis(): number;
+  toDate(): Date;
+  isEqual(other: Timestamp): boolean;
+}
+''');
+}
+
+const _tomorrowtechCheckMjs = '''
+import assert from "node:assert/strict";
+import { Timestamp } from "firebase-admin/firestore";
+import * as tt from "tomorrowtech-user";
+
+const doc = {
+  platform: "app", delete: false, token: "tok-1", locale: "it",
+  profileUser: { configured: true, name: "Francesco", surname: "Vezzani", email: "f@example.com" },
+  rentingSession: {
+    orderId: "", powerBankId: "", powerBankBatteryLevelStart: 0, stationId: "",
+    start: Timestamp.fromMillis(1720000000000), resumeClock: false,
+    resumeMilliseconds: 0, resumeTimeStopped: Timestamp.fromMillis(1720000000000),
+    paymentResume: false, batteryLevel: 0,
+  },
+  billing: {
+    configured: true, customerId: "cus_1",
+    wallet: { balance: 250, updated: Timestamp.fromMillis(1719000000000) },
+    paymentMethodDefault: "pm_1",
+    paymentMethods: [{ active: true, id: "pm_1", brand: "visa", country: "IT", last4: "4242", expirationMonth: 12, expirationYear: 2030 }],
+    paymentIntentID: "",
+  },
+  consents: [{ code: "tos", id: "c1", originalId: "o1" }],
+};
+
+const user = tt.UserData.fromMap(doc, { uid: "user-1" });
+assert.equal(user.uid, "user-1");
+assert.equal(user.profileUser.name, "Francesco");
+assert.equal(user.billing.wallet.balance, 250);
+assert.ok(user.billing.wallet.updated instanceof Timestamp);
+assert.equal(user.billing.paymentMethods[0].last4, "4242");
+user.consents[0].code = "privacy";
+assert.equal(user.consents[0].code, "privacy");
+const out = user.toMap();
+assert.ok(out.rentingSession.start instanceof Timestamp);
+assert.equal(out.billing.wallet.balance, 250);
+assert.equal(tt.Wallet.initialiseJSON.balance, 0);
+assert.ok(tt.RentingSession.initialiseJSON.start instanceof Timestamp);
+assert.equal(tt.kLocalesIT, "it");
+assert.equal(tt.PaymentMethod.listFromMaps(doc)[0].brand, "visa");
+console.log("TOMORROWTECH_USER_OK");
+''';
 
 bool _canRun(String executable, List<String> args) {
   try {

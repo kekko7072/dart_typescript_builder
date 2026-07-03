@@ -7,34 +7,273 @@ import 'dart:js_interop_unsafe';
 
 import 'package:hello_logic/hello_logic.dart' as $target;
 
-/// JS-facing wrapper for `Counter` — an opaque
-/// handle exposing the class through generated accessors.
-@JSExport()
-final class _$CounterExport {
-  _$CounterExport(this._inner);
+@JS('Object.keys')
+external JSArray<JSString> _objectKeys(JSObject object);
 
-  final $target.Counter _inner;
+@JS('Object.defineProperty')
+external void _definePropertyRaw(
+  JSObject target,
+  JSString name,
+  JSObject descriptor,
+);
 
-  String get label => _inner.label;
+@JS('Array.isArray')
+external bool _isJsArray(JSAny? value);
 
-  int get count => _inner.count;
-  set count(int value) {
-    _inner.count = value;
-  }
-
-  int increment(int by) => _inner.increment(by);
-
-  String describe() => _inner.describe();
-
-  void clear() => _inner.clear();
+@JS('Date')
+extension type _JSDate._(JSObject _) implements JSObject {
+  external _JSDate(int millisecondsSinceEpoch);
+  external double getTime();
 }
 
+String _describe(JSAny? value) {
+  if (value == null) return 'null';
+  if (_isJsArray(value)) return 'an array';
+  if (value.typeofEquals('string')) return 'a string';
+  if (value.typeofEquals('number')) return 'a number';
+  if (value.typeofEquals('boolean')) return 'a boolean';
+  if (value.typeofEquals('function')) return 'a function';
+  return 'a JS object';
+}
+
+// Injected by the package entry module. Boundary validation errors are
+// thrown from a JS frame so they reach callers as real TypeErrors with a
+// message — a Dart exception escaping a dart2wasm module surfaces as an
+// opaque, message-less WebAssembly.Exception.
+@JS('__dtb_throw__')
+external JSFunction? get _jsThrower;
+
+Never _throwBoundaryError(String message) {
+  final thrower = _jsThrower;
+  if (thrower != null) {
+    thrower.callAsFunction(null, message.toJS);
+  }
+  throw ArgumentError(message);
+}
+
+Never _fail(String expected, JSAny? value) =>
+    _throwBoundaryError('expected $expected, got ${_describe(value)}');
+
+void _defineGetter(JSObject target, String name, JSFunction getter) {
+  final descriptor = JSObject();
+  descriptor['get'] = getter;
+  descriptor['enumerable'] = true.toJS;
+  descriptor['configurable'] = true.toJS;
+  _definePropertyRaw(target, name.toJS, descriptor);
+}
+
+void _defineAccessor(
+  JSObject target,
+  String name,
+  JSFunction getter,
+  JSFunction setter,
+) {
+  final descriptor = JSObject();
+  descriptor['get'] = getter;
+  descriptor['set'] = setter;
+  descriptor['enumerable'] = true.toJS;
+  descriptor['configurable'] = true.toJS;
+  _definePropertyRaw(target, name.toJS, descriptor);
+}
+
+JSObject? _asOptions(JSAny? value, String owner) {
+  if (value == null) return null;
+  if (value.isA<JSObject>() && !_isJsArray(value)) return value as JSObject;
+  _throwBoundaryError(
+    "expected an options object for '$owner', got ${_describe(value)}",
+  );
+}
+
+JSAny? _requireOption(JSObject? options, String name, String owner) {
+  if (options == null || !options.has(name)) {
+    _throwBoundaryError("missing required option '$name' of '$owner'");
+  }
+  return options[name];
+}
+
+JSAny? _readOption(JSObject? options, String name) =>
+    (options == null || !options.has(name)) ? null : options[name];
+
+/// Builds a FRESH JS array. Never use `List.toJS` for outgoing values: on
+/// dart2js it is a zero-copy cast and the Dart list's internal `$ti`
+/// type-info symbol would leak into consumer-visible arrays.
+JSArray<JSAny?> _jsArrayOf(Iterable<JSAny?> items) {
+  final result = JSArray<JSAny?>();
+  var index = 0;
+  for (final item in items) {
+    result.setProperty((index++).toJS, item);
+  }
+  return result;
+}
+
+JSAny? _dateTimeToJs(DateTime value) => _JSDate(value.millisecondsSinceEpoch);
+
+bool _isJsDateTimeValue(JSAny? value) =>
+    value != null && value.instanceOfString('Date');
+
+DateTime _dateTimeFromJs(JSAny? value) {
+  if (value != null && value.instanceOfString('Date')) {
+    final milliseconds = (value as _JSDate).getTime();
+    if (!milliseconds.isNaN) {
+      return DateTime.fromMillisecondsSinceEpoch(
+        milliseconds.toInt(),
+        isUtc: true,
+      );
+    }
+  }
+  _fail('a JS Date', value);
+}
+
+JSAny? _dynamicToJs(Object? value) {
+  if (value == null) return null;
+  if (value is bool) return value.toJS;
+  if (value is num) return value.toJS;
+  if (value is String) return value.toJS;
+  if (value is DateTime) return _dateTimeToJs(value);
+  if (value is $target.Counter) return _wrapCounter(value);
+  if (value is Map) {
+    final result = JSObject();
+    value.forEach((key, item) {
+      if (key is! String) {
+        _throwBoundaryError(
+          'only String map keys cross the boundary, '
+          'got a key of type ${key.runtimeType}',
+        );
+      }
+      result[key] = _dynamicToJs(item);
+    });
+    return result;
+  }
+  if (value is Iterable) {
+    return _jsArrayOf(value.map(_dynamicToJs));
+  }
+  _throwBoundaryError(
+    'cannot marshal a value of type ${value.runtimeType} across the '
+    'boundary',
+  );
+}
+
+Object? _dynamicFromJs(JSAny? value) {
+  if (value == null) return null;
+  if (value.typeofEquals('boolean')) return (value as JSBoolean).toDart;
+  if (value.typeofEquals('number')) {
+    final number = (value as JSNumber).toDartDouble;
+    // Whole numbers become int, matching dart2js/web semantics on both
+    // engines (2^53 guards against precision-lossy conversions).
+    return (number.isFinite &&
+            number.truncateToDouble() == number &&
+            number.abs() <= 9007199254740992)
+        ? number.toInt()
+        : number;
+  }
+  if (value.typeofEquals('string')) return (value as JSString).toDart;
+  if (_isJsArray(value)) {
+    return [
+      for (final item in (value as JSArray<JSAny?>).toDart)
+        _dynamicFromJs(item),
+    ];
+  }
+  if (_isJsDateTimeValue(value)) return _dateTimeFromJs(value);
+  if (value.typeofEquals('function')) {
+    _fail('a marshallable value (functions cannot cross the boundary)', value);
+  }
+  if (value.isA<JSObject>()) {
+    final object = value as JSObject;
+    final handle = object['__dtb_handle__'];
+    if (handle != null && handle.isA<JSBoxedDartObject>()) {
+      return (handle as JSBoxedDartObject).toDart;
+    }
+    return <String, dynamic>{
+      for (final key in _objectKeys(object).toDart.map((k) => k.toDart))
+        key: _dynamicFromJs(object[key]),
+    };
+  }
+  _fail('a marshallable value', value);
+}
+
+final Expando<JSObject> _wrapCacheCounter = Expando();
+
+/// Opaque JS handle over `Counter` (identity-cached).
+JSObject _wrapCounter($target.Counter inner) {
+  final cached = _wrapCacheCounter[inner];
+  if (cached != null) return cached;
+  final wrapper = JSObject();
+  _wrapCacheCounter[inner] = wrapper;
+  wrapper['__dtb_handle__'] = inner.toJSBox;
+  _defineGetter(wrapper, 'label', (() => inner.label.toJS).toJS);
+  _defineAccessor(
+    wrapper,
+    'count',
+    (() => inner.count.toJS).toJS,
+    ((JSAny? value) {
+      inner.count = _toDartInt(value);
+    }).toJS,
+  );
+  wrapper['increment'] = (([JSAny? $a0]) {
+    return inner.increment(_toDartInt($a0)).toJS;
+  }).toJS;
+  wrapper['describe'] = (() {
+    return inner.describe().toJS;
+  }).toJS;
+  wrapper['clear'] = (() {
+    inner.clear();
+  }).toJS;
+  return wrapper;
+}
+
+$target.Counter _unwrapCounter(JSAny? value) {
+  if (value != null && value.isA<JSObject>()) {
+    final handle = (value as JSObject)['__dtb_handle__'];
+    if (handle != null && handle.isA<JSBoxedDartObject>()) {
+      final inner = (handle as JSBoxedDartObject).toDart;
+      if (inner is $target.Counter) return inner;
+    }
+  }
+  _fail('a Counter handle created by this package', value);
+}
+
+int _toDartInt(JSAny? value) {
+  if (value == null || !value.typeofEquals('number')) {
+    _fail('a number', value);
+  }
+  final number = (value as JSNumber).toDartDouble;
+  if (!number.isFinite || number.truncateToDouble() != number) {
+    _fail('an integer', value);
+  }
+  return number.toInt();
+}
+
+num _toDartNum(JSAny? value) {
+  if (value == null || !value.typeofEquals('number')) {
+    _fail('a number', value);
+  }
+  final number = (value as JSNumber).toDartDouble;
+  return (number.isFinite && number.truncateToDouble() == number)
+      ? number.toInt()
+      : number;
+}
+
+String _toDartString(JSAny? value) =>
+    value != null && value.typeofEquals('string')
+    ? (value as JSString).toDart
+    : _fail('a string', value);
+
 void _install(JSObject target) {
-  target['add'] = ((int a, int b) => $target.add(a, b)).toJS;
-  target['greet'] = ((String name) => $target.greet(name)).toJS;
-  target['half'] = ((num value) => $target.half(value)).toJS;
-  target['isEven'] = ((int value) => $target.isEven(value)).toJS;
-  target['createCounter'] = ((String label, int count) => createJSInteropWrapper(_$CounterExport($target.Counter(label, count)))).toJS;
+  target['add'] = (([JSAny? $a0, JSAny? $a1]) {
+    return $target.add(_toDartInt($a0), _toDartInt($a1)).toJS;
+  }).toJS;
+  target['greet'] = (([JSAny? $a0]) {
+    return $target.greet(_toDartString($a0)).toJS;
+  }).toJS;
+  target['half'] = (([JSAny? $a0]) {
+    return $target.half(_toDartNum($a0)).toJS;
+  }).toJS;
+  target['isEven'] = (([JSAny? $a0]) {
+    return $target.isEven(_toDartInt($a0)).toJS;
+  }).toJS;
+  target['createCounter'] = (([JSAny? $a0, JSAny? $a1]) {
+    return _wrapCounter($target.Counter(_toDartString($a0), _toDartInt($a1)));
+  }).toJS;
 }
 
 void main() {

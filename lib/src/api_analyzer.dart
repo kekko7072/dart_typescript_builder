@@ -40,30 +40,76 @@ final class TargetPackageInfo {
 
 /// Names that would collide with `Object`/JS object plumbing when exported
 /// through the generated wrapper class.
+///
+/// `then` is reserved for a subtler reason: a wrapper exposing a callable
+/// `then` property is a JS *thenable*, and the Promise resolution procedure
+/// would assimilate it — every `Future<ThatClass>` await would call the
+/// user's method instead of resolving with the handle.
 const _reservedMemberNames = {
   'hashCode',
   'runtimeType',
   'toString',
   'noSuchMethod',
   'constructor',
+  'then',
   '__proto__',
   '__dtb_handle__',
 };
 
-/// TypeScript reserved words: these cannot be `export function` /
-/// `export const` names (object *members* may use them freely).
+/// TypeScript/JS reserved words (including strict-mode and module-context
+/// ones — the generated ESM entry runs in strict mode): these cannot be
+/// `export function` / `export const` names (object *members* may use them
+/// freely).
 const _tsReservedWords = {
-  'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger',
-  'default', 'delete', 'do', 'else', 'enum', 'export', 'extends', 'false',
-  'finally', 'for', 'function', 'if', 'import', 'in', 'instanceof', 'new',
-  'null', 'return', 'super', 'switch', 'this', 'throw', 'true', 'try',
-  'typeof', 'var', 'void', 'while', 'with',
+  // Strict-mode / contextual additions.
+  'let', 'static', 'yield', 'await', 'arguments', 'eval',
+  'implements', 'interface', 'package', 'private', 'protected', 'public',
+  'break',
+  'case',
+  'catch',
+  'class',
+  'const',
+  'continue',
+  'debugger',
+  'default',
+  'delete',
+  'do',
+  'else',
+  'enum',
+  'export',
+  'extends',
+  'false',
+  'finally',
+  'for',
+  'function',
+  'if',
+  'import',
+  'in',
+  'instanceof',
+  'new',
+  'null',
+  'return',
+  'super',
+  'switch',
+  'this',
+  'throw',
+  'true',
+  'try',
+  'typeof',
+  'var',
+  'void',
+  'while',
+  'with',
 };
 
 /// Default values the facade can inline verbatim: literals only, no
-/// identifiers that would resolve against the wrong scope.
+/// identifiers that would resolve against the wrong scope. Collection
+/// defaults must be UNTYPED (`[]`/`{}`): explicit type arguments could name
+/// package-local types that do not resolve inside the prefixed facade; the
+/// facade binds defaults through a typed local, so untyped literals get
+/// their element types from context.
 final _inlinableDefault = RegExp(
-  r'''^(null|true|false|-?\d+(\.\d+)?([eE][+-]?\d+)?|0x[0-9a-fA-F]+|'[^'$\\]*'|"[^"$\\]*"|(const\s+)?(<[A-Za-z0-9_,<>?\s]+>)?\[\]|(const\s+)?(<[A-Za-z0-9_,<>?\s]+>)?\{\})$''',
+  r'''^(null|true|false|-?\d+(\.\d+)?([eE][+-]?\d+)?|0x[0-9a-fA-F]+|'[^'$\\]*'|"[^"$\\]*"|(const\s+)?\[\]|(const\s+)?\{\})$''',
 );
 
 /// Reads `pubspec.yaml` and locates the conventional public entrypoint
@@ -103,7 +149,13 @@ TargetPackageInfo readTargetPackage(String packagePath) {
 }
 
 /// Analyzes [package] and returns its boundary API model.
-Future<ApiModel> analyzePackage(TargetPackageInfo package) async {
+///
+/// [dateTimeMode] selects how `DateTime` crosses the boundary (JS `Date` or
+/// Firestore `Timestamp`).
+Future<ApiModel> analyzePackage(
+  TargetPackageInfo package, {
+  DateTimeMode dateTimeMode = DateTimeMode.jsDate,
+}) async {
   final packageConfig = File(
     p.join(package.rootPath, '.dart_tool', 'package_config.json'),
   );
@@ -140,7 +192,7 @@ Future<ApiModel> analyzePackage(TargetPackageInfo package) async {
     final element = library.exportNamespace.definedNames2[name];
     if (element is ClassElement) exportedClasses.add(element);
   }
-  final lowerer = _Lowerer(exportedClasses);
+  final lowerer = _Lowerer(exportedClasses, dateTimeMode);
 
   final functions = <FunctionApi>[];
   final classes = <ClassApi>[];
@@ -164,7 +216,8 @@ Future<ApiModel> analyzePackage(TargetPackageInfo package) async {
           "top-level getter '$name'",
           file: _fileOf(element),
           line: _lineOf(element),
-          hint: 'computed getters are evaluated once at module load; '
+          hint:
+              'computed getters are evaluated once at module load; '
               'expose a function instead.',
         );
       case TopLevelVariableElement():
@@ -211,7 +264,94 @@ Future<ApiModel> analyzePackage(TargetPackageInfo package) async {
     constants: constants,
   );
   _rejectNameCollisions(api);
+  _rejectRuntimeReferencesToTypeOnlyClasses(api);
+  _rejectDateTimeNameShadowing(api, dateTimeMode);
   return api;
+}
+
+/// An exported class named like the TypeScript type used for `DateTime`
+/// would shadow it inside the generated `.d.ts`.
+void _rejectDateTimeNameShadowing(ApiModel api, DateTimeMode mode) {
+  if (!api.allTypes.any((t) => t is DateTimeType)) return;
+  final reserved = switch (mode) {
+    DateTimeMode.jsDate => 'Date',
+    DateTimeMode.firestoreTimestamp => 'Timestamp',
+  };
+  if (api.classByName(reserved) != null) {
+    throw BuildException(
+      "an exported class is named '$reserved', which collides with the "
+      'TypeScript type used for Dart DateTime in ${mode.id} mode. Rename '
+      'the class or use the other --datetime mode.',
+    );
+  }
+}
+
+/// Type-only classes (Stream-using abstract contracts) exist purely in the
+/// `.d.ts`; nothing that runs at runtime may reference them.
+void _rejectRuntimeReferencesToTypeOnlyClasses(ApiModel api) {
+  final typeOnly = {
+    for (final c in api.classes)
+      if (c.isTypeOnly) c.name,
+  };
+  if (typeOnly.isEmpty) return;
+
+  void walk(BoundaryType type, String where) {
+    switch (type) {
+      case ClassRefType(:final className):
+        if (typeOnly.contains(className)) {
+          throw BuildException(
+            "$where references class '$className', which is type-only "
+            '(it declares Stream members and cannot cross the boundary at '
+            'runtime). Remove the reference or drop the Stream members.',
+          );
+        }
+      case ListType(:final element):
+        walk(element, where);
+      case MapType(:final value):
+        walk(value, where);
+      case FutureType(:final value):
+        walk(value, where);
+      case StreamType(:final value):
+        walk(value, where);
+      case PrimitiveType() || VoidType() || DynamicType() || DateTimeType():
+        break;
+    }
+  }
+
+  void walkFunction(FunctionApi f, String where) {
+    walk(f.returnType, where);
+    for (final p in f.parameters) {
+      walk(p.type, where);
+    }
+  }
+
+  for (final constant in api.constants) {
+    walk(constant.type, "top-level constant '${constant.name}'");
+  }
+  for (final f in api.functions) {
+    walkFunction(f, "function '${f.name}'");
+  }
+  for (final c in api.classes) {
+    // Instance members of type-only classes are themselves type-only.
+    if (!c.isTypeOnly) {
+      for (final p in c.constructorParameters) {
+        walk(p.type, "constructor of '${c.name}'");
+      }
+      for (final prop in c.properties) {
+        walk(prop.type, "property '${c.name}.${prop.name}'");
+      }
+      for (final m in c.methods) {
+        walkFunction(m, "method '${c.name}.${m.name}'");
+      }
+    }
+    // Statics are runtime even on type-only classes.
+    for (final s in c.staticCallables) {
+      walkFunction(s, "static '${c.name}.${s.name}'");
+    }
+    for (final s in c.staticProperties) {
+      walk(s.type, "static '${c.name}.${s.name}'");
+    }
+  }
 }
 
 /// `dart:ffi` / `dart:mirrors` do not compile to JS or WASM at all: reject the
@@ -262,9 +402,17 @@ void _rejectForbiddenPlatformImports(
 /// Lowers resolved elements/types into the boundary model. Holds the set of
 /// exported classes so `ClassRefType`s can be resolved.
 final class _Lowerer {
-  _Lowerer(this._exportedClasses);
+  _Lowerer(this._exportedClasses, this._dateTimeMode);
 
   final Set<ClassElement> _exportedClasses;
+  final DateTimeMode _dateTimeMode;
+
+  /// While lowering instance members of an abstract class, `Stream` types
+  /// are tolerated (they force the class to become type-only).
+  bool _allowStream = false;
+
+  /// Set when a `Stream` was lowered in the current class's instance members.
+  bool _sawStream = false;
 
   FunctionApi lowerFunction(
     ExecutableElement element, {
@@ -360,7 +508,8 @@ final class _Lowerer {
           name: parameterName,
           type: type,
           kind: kind,
-          isRequired: parameter.isRequiredPositional || parameter.isRequiredNamed,
+          isRequired:
+              parameter.isRequiredPositional || parameter.isRequiredNamed,
           defaultValueCode: defaultCode,
         ),
       );
@@ -372,6 +521,8 @@ final class _Lowerer {
     final className = element.name ?? '';
     final file = _fileOf(element);
     final line = _lineOf(element);
+    _allowStream = false;
+    _sawStream = false;
 
     if (element.typeParameters.isNotEmpty) {
       throw UnsupportedApiException(
@@ -396,7 +547,14 @@ final class _Lowerer {
             'flatten the class or hide it from the public API.',
       );
     }
-    final isAbstract = element.isAbstract || element.isSealed;
+    // An abstract class with a public unnamed factory constructor IS
+    // constructable — it gets a `createX` factory like a concrete class.
+    final hasPublicUnnamedFactory = element.constructors.any((constructor) {
+      final ctorName = constructor.name ?? 'new';
+      return constructor.isFactory && (ctorName == 'new' || ctorName.isEmpty);
+    });
+    final isAbstract =
+        (element.isAbstract || element.isSealed) && !hasPublicUnnamedFactory;
 
     // Constructors: the public unnamed one becomes the factory function;
     // public named constructors and factories become static callables.
@@ -442,45 +600,58 @@ final class _Lowerer {
       );
     }
 
+    // Instance members of abstract classes tolerate Stream types — hitting
+    // one turns the class into a type-only interface.
+    _sawStream = false;
+    _allowStream = isAbstract;
+
     // Properties: non-synthetic instance fields, plus explicit getters
     // (readonly unless a matching explicit setter exists). Static
-    // const/final fields become namespace constants.
+    // const/final fields and static getters become live namespace
+    // properties.
     final properties = <PropertyApi>[];
-    final staticConstants = <PropertyApi>[];
+    final staticProperties = <PropertyApi>[];
     for (final field in element.fields) {
       if (field.isSynthetic) continue;
       final fieldName = field.name ?? '';
       if (fieldName.startsWith('_')) continue;
       _checkMemberName(fieldName, className, field);
-      final type = lowerType(
-        field.type,
-        context: "field '$className.$fieldName'",
-        element: field,
-        allowVoid: false,
-      );
       if (field.isStatic) {
         if (!(field.isConst || field.isFinal)) {
           throw UnsupportedApiException(
             "mutable static field '$className.$fieldName'",
             file: _fileOf(field),
             line: _lineOf(field),
-            hint: 'exported statics are one-time snapshots; make it '
+            hint:
+                'exported statics are read-only on the JS side; make it '
                 'const/final or expose accessor methods.',
           );
         }
-        staticConstants.add(
+        _allowStream = false;
+        staticProperties.add(
           PropertyApi(
             name: fieldName,
-            type: type,
+            type: lowerType(
+              field.type,
+              context: "static field '$className.$fieldName'",
+              element: field,
+              allowVoid: false,
+            ),
             isReadonly: true,
             documentation: field.documentationComment,
           ),
         );
+        _allowStream = isAbstract;
       } else {
         properties.add(
           PropertyApi(
             name: fieldName,
-            type: type,
+            type: lowerType(
+              field.type,
+              context: "field '$className.$fieldName'",
+              element: field,
+              allowVoid: false,
+            ),
             isReadonly: field.isFinal || field.isConst,
             documentation: field.documentationComment,
           ),
@@ -496,16 +667,27 @@ final class _Lowerer {
       if (getter.isSynthetic) continue;
       final getterName = getter.name ?? '';
       if (getterName.startsWith('_')) continue;
-      if (getter.isStatic) {
-        throw UnsupportedApiException(
-          "static getter '$className.$getterName'",
-          file: _fileOf(getter),
-          line: _lineOf(getter),
-          hint: 'exported statics are evaluated once at module load; '
-              'expose a static method instead.',
-        );
-      }
       _checkMemberName(getterName, className, getter);
+      if (getter.isStatic) {
+        // Exported as a live getter property on the namespace object, so
+        // impure getters are re-evaluated per access.
+        _allowStream = false;
+        staticProperties.add(
+          PropertyApi(
+            name: getterName,
+            type: lowerType(
+              getter.returnType,
+              context: "static getter '$className.$getterName'",
+              element: getter,
+              allowVoid: false,
+            ),
+            isReadonly: true,
+            documentation: getter.documentationComment,
+          ),
+        );
+        _allowStream = isAbstract;
+        continue;
+      }
       properties.add(
         PropertyApi(
           name: getterName,
@@ -521,16 +703,39 @@ final class _Lowerer {
       );
     }
     for (final setter in element.setters) {
-      if (setter.isSynthetic || setter.isStatic) continue;
+      if (setter.isSynthetic) continue;
       final setterName = (setter.name ?? '').replaceAll('=', '');
-      final hasGetter = properties.any(
-        (property) => property.name == setterName,
-      );
-      if (!hasGetter) {
+      if (setterName.startsWith('_')) continue;
+      if (setter.isStatic) {
+        throw UnsupportedApiException(
+          "static setter '$className.$setterName'",
+          file: _fileOf(setter),
+          line: _lineOf(setter),
+          hint: 'exported statics are read-only on the JS side; '
+              'expose a static method instead.',
+        );
+      }
+      final matchingGetter = element.getters
+          .where((g) => !g.isSynthetic && !g.isStatic && g.name == setterName)
+          .firstOrNull;
+      if (matchingGetter == null) {
         throw UnsupportedApiException(
           "write-only setter '$className.$setterName' (no matching getter)",
           file: _fileOf(setter),
           line: _lineOf(setter),
+        );
+      }
+      // The generated accessor converts the incoming value using the
+      // getter's type; a diverging setter type would not compile.
+      final setterType = setter.formalParameters.single.type;
+      if (setterType != matchingGetter.returnType) {
+        throw UnsupportedApiException(
+          "getter/setter type mismatch for '$className.$setterName' "
+          "(getter is '${matchingGetter.returnType.getDisplayString()}', "
+          "setter takes '${setterType.getDisplayString()}')",
+          file: _fileOf(setter),
+          line: _lineOf(setter),
+          hint: 'give both accessors the same type.',
         );
       }
     }
@@ -549,22 +754,29 @@ final class _Lowerer {
       }
       _checkMemberName(methodName, className, method);
       if (method.isStatic) {
+        _allowStream = false;
         staticCallables.add(
           lowerFunction(method, kind: 'static method', owner: className),
         );
+        _allowStream = isAbstract;
       } else {
         methods.add(lowerFunction(method, kind: 'method', owner: className));
       }
     }
 
+    final isTypeOnly = _sawStream;
+    _allowStream = false;
+    _sawStream = false;
+
     return ClassApi(
       name: className,
       isAbstract: isAbstract,
+      isTypeOnly: isTypeOnly,
       constructorParameters: constructorParameters,
       properties: properties,
       methods: methods,
       staticCallables: staticCallables,
-      staticConstants: staticConstants,
+      staticProperties: staticProperties,
       documentation: element.documentationComment,
     );
   }
@@ -578,7 +790,8 @@ final class _Lowerer {
         "mutable top-level variable '$name'",
         file: _fileOf(element),
         line: _lineOf(element),
-        hint: 'exported values are one-time snapshots; make it const/final '
+        hint:
+            'exported values are one-time snapshots; make it const/final '
             'or expose functions.',
       );
     }
@@ -658,7 +871,7 @@ final class _Lowerer {
     }
 
     if (type is types.InterfaceType) {
-      if (type.isDartCoreList) {
+      if (type.isDartCoreList || type.isDartCoreIterable) {
         return ListType(
           lowerType(
             type.typeArguments.single,
@@ -667,11 +880,13 @@ final class _Lowerer {
             allowVoid: false,
           ),
           isNullable: nullable,
+          isIterable: type.isDartCoreIterable,
         );
       }
       if (type.isDartCoreMap) {
         final key = type.typeArguments.first;
-        if (!key.isDartCoreString) {
+        if (!key.isDartCoreString ||
+            key.nullabilitySuffix != NullabilitySuffix.none) {
           throw UnsupportedApiException(
             "map key type '${key.getDisplayString()}' in $context "
             '(only String keys cross the boundary — JS object keys are '
@@ -702,18 +917,36 @@ final class _Lowerer {
         );
       }
       if (type.isDartAsyncStream) {
+        if (_allowStream) {
+          // Tolerated only inside abstract-class instance members: the class
+          // becomes a type-only TypeScript interface (AsyncIterable typing),
+          // never marshalled at runtime.
+          _sawStream = true;
+          return StreamType(
+            lowerType(
+              type.typeArguments.single,
+              context: 'value type of $context',
+              element: element,
+              allowVoid: false,
+            ),
+            isNullable: nullable,
+          );
+        }
         throw UnsupportedApiException(
           "type '${type.getDisplayString()}' in $context",
           file: _fileOf(element),
           line: _lineOf(element),
-          hint: 'Stream -> AsyncIterable marshalling is planned for Phase 4.',
+          hint:
+              'runtime Stream -> AsyncIterable marshalling is planned for '
+              'Phase 4 (Streams are currently allowed only in abstract '
+              'contract classes, which become type-only interfaces).',
         );
       }
 
       final interfaceElement = type.element;
       final interfaceLibrary = interfaceElement.library;
       if (interfaceElement.name == 'DateTime' && interfaceLibrary.isDartCore) {
-        return DateTimeType(isNullable: nullable);
+        return DateTimeType(mode: _dateTimeMode, isNullable: nullable);
       }
       if (interfaceElement is ClassElement &&
           _exportedClasses.contains(interfaceElement)) {
@@ -807,10 +1040,7 @@ void _rejectNameCollisions(ApiModel api) {
       );
     }
     if (classApi.hasStaticsNamespace) {
-      claim(
-        classApi.name,
-        "the statics namespace of class '${classApi.name}'",
-      );
+      claim(classApi.name, "the statics namespace of class '${classApi.name}'");
     }
   }
 }

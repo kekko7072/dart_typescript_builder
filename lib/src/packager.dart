@@ -48,6 +48,8 @@ PackageResult writeNpmPackage({
       '.': {'types': './index.d.ts', 'default': './index.js'},
     },
     'files': [...backendOutput.emittedFiles, 'index.d.ts', 'README.md'],
+    if (api.usesFirestoreTimestamp)
+      'peerDependencies': {'firebase-admin': '>=11'},
     ...backendOutput.packageJsonFields,
   };
   File(p.join(outputDir, 'package.json')).writeAsStringSync(
@@ -69,9 +71,10 @@ PackageResult writeNpmPackage({
   );
 }
 
-/// npm requires strict semver: Dart build metadata (`1.0.0+3`) is not valid
-/// there — fold it into a prerelease-ish suffix.
-String _npmVersion(String dartVersion) => dartVersion.replaceAll('+', '-');
+/// Dart build metadata (`1.0.0+3`) has no npm meaning and folding it into a
+/// prerelease suffix would exclude the version from caret/tilde ranges:
+/// strip it.
+String _npmVersion(String dartVersion) => dartVersion.split('+').first;
 
 String _readme(
   String npmName,
@@ -102,7 +105,23 @@ String _readme(
     )
     ..writeln(
       '- Class instances are opaque handles over Dart objects: use '
-      'the generated properties/methods, do not spread/clone them.',
+      'the generated properties/methods, do not spread/clone them '
+      '(JSON round trips destroy the handle).',
+    )
+    ..writeln(
+      api.usesFirestoreTimestamp
+          ? '- Dart `DateTime` crosses as a Firestore `Timestamp` '
+                '(`firebase-admin` is a peer dependency — install it next '
+                'to this package); the Dart local/UTC flag is not preserved '
+                '(arrives as UTC).'
+          : '- Dart `DateTime` crosses as a JS `Date` via epoch '
+                'milliseconds (microseconds truncated); the Dart local/UTC '
+                'flag is not preserved (arrives as UTC).',
+    )
+    ..writeln(
+      '- `unknown` values (Dart `dynamic`) are deep-converted snapshots: '
+      'mutations do not travel across the boundary; send changes back via '
+      'return values.',
     );
   return buffer.toString();
 }

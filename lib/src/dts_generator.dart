@@ -15,13 +15,25 @@ String generateDts(ApiModel api) {
     ..writeln('// Boundary semantics:')
     ..writeln('// - Dart `int`, `double` and `num` all cross as JS `number`')
     ..writeln('//   (IEEE-754 double); integers beyond 2^53 lose precision.')
-    ..writeln('// - Dart `DateTime` crosses as JS `Date` via epoch')
-    ..writeln('//   milliseconds: microseconds are truncated and the Dart')
-    ..writeln('//   local/UTC flag is not preserved (arrives in Dart as UTC).')
+    ..writeln(
+      api.usesFirestoreTimestamp
+          ? '// - Dart `DateTime` crosses as a Firestore `Timestamp`\n'
+                '//   (firebase-admin peer dependency), microsecond fidelity;\n'
+                '//   the Dart local/UTC flag is not preserved (arrives UTC).'
+          : '// - Dart `DateTime` crosses as JS `Date` via epoch\n'
+                '//   milliseconds: microseconds are truncated and the Dart\n'
+                '//   local/UTC flag is not preserved (arrives in Dart as UTC).',
+    )
     ..writeln('// - `unknown` marks Dart `dynamic`/`Object`: only')
     ..writeln('//   JSON-compatible values survive the boundary.')
     ..writeln('// - Class instances are opaque handles over Dart objects;')
     ..writeln('//   only handles created by this package can be passed back.');
+
+  if (api.usesFirestoreTimestamp) {
+    buffer
+      ..writeln()
+      ..writeln('import type { Timestamp } from "firebase-admin/firestore";');
+  }
 
   for (final constant in api.constants) {
     buffer.writeln();
@@ -90,9 +102,11 @@ String generateDts(ApiModel api) {
         ..writeln(' * constructors and factories, static constants).')
         ..writeln(' */')
         ..writeln('export const ${classApi.name}: {');
-      for (final constant in classApi.staticConstants) {
+      for (final constant in classApi.staticProperties) {
         _writeDoc(buffer, constant.documentation, indent: '  ');
-        buffer.writeln('  readonly ${constant.name}: ${constant.type.tsSource};');
+        buffer.writeln(
+          '  readonly ${constant.name}: ${constant.type.tsSource};',
+        );
       }
       for (final callable in classApi.staticCallables) {
         _writeDoc(buffer, callable.documentation, indent: '  ');
@@ -108,18 +122,33 @@ String generateDts(ApiModel api) {
   return buffer.toString();
 }
 
+/// JS/TS reserved words are illegal as function-declaration parameter names.
+/// Positional parameter names are pure labels (calls are positional), so
+/// they can be safely renamed; named options are object members, where
+/// reserved words are legal.
+const _tsReservedParamNames = {
+  'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger',
+  'default', 'delete', 'do', 'else', 'enum', 'export', 'extends', 'false',
+  'finally', 'for', 'function', 'if', 'import', 'in', 'instanceof', 'new',
+  'null', 'return', 'super', 'switch', 'this', 'throw', 'true', 'try',
+  'typeof', 'var', 'void', 'while', 'with', 'let', 'static', 'yield',
+  'await', 'arguments', 'eval', 'implements', 'interface', 'package',
+  'private', 'protected', 'public',
+};
+
+String _paramLabel(String name) =>
+    _tsReservedParamNames.contains(name) ? '${name}_' : name;
+
 String _parameterList(FunctionApi function) {
   final parts = <String>[
     for (final p in function.requiredPositional)
-      '${p.name}: ${p.type.tsSource}',
+      '${_paramLabel(p.name)}: ${p.type.tsSource}',
     for (final p in function.optionalPositional)
-      '${p.name}?: ${p.type.tsSource}',
+      '${_paramLabel(p.name)}?: ${p.type.tsSource}',
   ];
   if (function.hasOptionsObject) {
     final members = function.named
-        .map(
-          (p) => '${p.name}${p.isRequired ? '' : '?'}: ${p.type.tsSource}',
-        )
+        .map((p) => '${p.name}${p.isRequired ? '' : '?'}: ${p.type.tsSource}')
         .join('; ');
     final optional = function.optionsObjectIsOptional ? '?' : '';
     parts.add('${function.optionsParameterName}$optional: { $members }');
@@ -127,7 +156,10 @@ String _parameterList(FunctionApi function) {
   return parts.join(', ');
 }
 
-/// Converts a Dart `///` doc comment into a JSDoc block.
+/// Converts a Dart doc comment (`///` lines or a `/** ... */` block) into a
+/// JSDoc block. `*/` inside doc text is escaped — it would otherwise close
+/// the generated JSDoc early and inject the remaining text as raw
+/// TypeScript source.
 void _writeDoc(
   StringBuffer buffer,
   String? documentation, {
@@ -138,6 +170,15 @@ void _writeDoc(
       .split('\n')
       .map((line) => line.trim())
       .map((line) => line.startsWith('///') ? line.substring(3).trim() : line)
+      // Block-style Dart docs: strip the comment markers themselves.
+      .map((line) => line.startsWith('/**') ? line.substring(3).trim() : line)
+      .map(
+        (line) => line.endsWith('*/')
+            ? line.substring(0, line.length - 2).trim()
+            : line,
+      )
+      .map((line) => line.startsWith('*') ? line.substring(1).trim() : line)
+      .map((line) => line.replaceAll('*/', r'*\/'))
       .toList();
   buffer.writeln('$indent/**');
   for (final line in lines) {

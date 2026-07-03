@@ -2,9 +2,16 @@
 // TypeScript declarations for the compiled Dart package
 // `hello_logic` (package:hello_logic/hello_logic.dart).
 //
-// Numeric caveat: Dart `int`, `double` and `num` all cross
-// the boundary as JS `number` (IEEE-754 double). Integer
-// values beyond 2^53 lose precision.
+// Boundary semantics:
+// - Dart `int`, `double` and `num` all cross as JS `number`
+//   (IEEE-754 double); integers beyond 2^53 lose precision.
+// - Dart `DateTime` crosses as JS `Date` via epoch
+//   milliseconds: microseconds are truncated and the Dart
+//   local/UTC flag is not preserved (arrives in Dart as UTC).
+// - `unknown` marks Dart `dynamic`/`Object`: only
+//   JSON-compatible values survive the boundary.
+// - Class instances are opaque handles over Dart objects;
+//   only handles created by this package can be passed back.
 
 /**
  * Adds two integers.

@@ -35,6 +35,20 @@ void main(List<String> arguments) async {
           'package-name',
           help: 'npm package name (default: Dart name with _ -> -).',
         )
+        ..addOption(
+          'datetime',
+          allowed: [
+            'js-date',
+            'date',
+            'firestore',
+            'firestore-timestamp',
+            'timestamp',
+          ],
+          defaultsTo: 'js-date',
+          help:
+              'How DateTime crosses the boundary: JS Date, or Firestore '
+              'Timestamp from firebase-admin (for Firebase backends).',
+        )
         ..addFlag('verbose', abbr: 'v', negatable: false),
     );
 
@@ -69,6 +83,7 @@ void main(List<String> arguments) async {
             ? null
             : ModuleFormat.parse(command['module'] as String),
         npmPackageName: command['package-name'] as String?,
+        dateTimeMode: DateTimeMode.parse(command['datetime'] as String),
         verbose: command['verbose'] as bool,
       ),
     );

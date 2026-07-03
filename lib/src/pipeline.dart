@@ -21,6 +21,7 @@ final class BuildOptions {
     this.engine = 'dart2js',
     this.moduleFormat,
     this.npmPackageName,
+    this.dateTimeMode = DateTimeMode.jsDate,
     this.verbose = false,
   });
 
@@ -39,6 +40,10 @@ final class BuildOptions {
 
   /// npm package name; defaults to the Dart package name with `_` -> `-`.
   final String? npmPackageName;
+
+  /// How `DateTime` crosses the boundary: JS `Date` (default) or Firestore
+  /// `Timestamp` from firebase-admin (for TypeScript backends on Firebase).
+  final DateTimeMode dateTimeMode;
 
   final bool verbose;
 }
@@ -82,7 +87,7 @@ Future<BuildResult> buildNpmPackage(BuildOptions options) async {
       '__dtb_exports_${npmName.replaceAll(RegExp('[^A-Za-z0-9_]'), '_')}__';
 
   // -- Stage 1: analyze. -----------------------------------------------------
-  final api = await analyzePackage(target);
+  final api = await analyzePackage(target, dateTimeMode: options.dateTimeMode);
   if (api.exportedNames.isEmpty) {
     throw BuildException(
       "the public API of '${target.name}' (lib/${target.name}.dart) exports "
@@ -95,9 +100,13 @@ Future<BuildResult> buildNpmPackage(BuildOptions options) async {
     p.join(target.rootPath, '.dart_tool', 'dart_typescript_builder'),
   )..createSync(recursive: true);
   final facadePath = p.join(workDir.path, 'facade.dart');
-  File(
-    facadePath,
-  ).writeAsStringSync(generateFacade(api, globalExportKey: globalExportKey));
+  File(facadePath).writeAsStringSync(
+    generateFacade(
+      api,
+      globalExportKey: globalExportKey,
+      dateTimeMode: options.dateTimeMode,
+    ),
+  );
 
   // -- Stages 3 + 4 + 5: compile, declarations, npm package. ----------------
   final outputDir = Directory(p.canonicalize(options.outputPath))

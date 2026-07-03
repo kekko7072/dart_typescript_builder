@@ -56,6 +56,101 @@ void main() {
       _expectGolden(generateDts(api), 'hello_logic/index.d.ts', update: update);
     });
   });
+
+  group('boundary_logic', () {
+    late ApiModel api;
+    late ApiModel firestoreApi;
+
+    setUpAll(() async {
+      ensureFixtureResolved('boundary_logic');
+      final target = readTargetPackage(fixturePath('boundary_logic'));
+      api = await analyzePackage(target);
+      firestoreApi = await analyzePackage(
+        target,
+        dateTimeMode: DateTimeMode.firestoreTimestamp,
+      );
+    });
+
+    test('api model shape', () {
+      expect(api.constants.map((c) => c.name), ['kDefaultLimit', 'kLocales']);
+      expect(api.classes.map((c) => c.name), [
+        'Note',
+        'NoteRepository',
+        'Notebook',
+      ]);
+
+      final note = api.classByName('Note')!;
+      expect(note.isAbstract, isFalse);
+      expect(note.isTypeOnly, isFalse);
+      expect(note.staticCallables.map((s) => s.name), [
+        'fromMap',
+        'listFromMaps',
+      ]);
+      expect(note.staticProperties.map((s) => s.name), ['template']);
+      expect(note.constructorParameters.map((c) => c.kind), [
+        ParameterKind.requiredPositional,
+        ParameterKind.named,
+        ParameterKind.named,
+      ]);
+
+      // Stream-bearing abstract contract: exported as a type-only interface.
+      final repository = api.classByName('NoteRepository')!;
+      expect(repository.isAbstract, isTrue);
+      expect(repository.isTypeOnly, isTrue);
+      expect(repository.methods.map((m) => m.name), [
+        'getByTitle',
+        'watchAll',
+        'save',
+      ]);
+
+      // Type-only classes never appear in the runtime exports.
+      expect(api.exportedNames, isNot(contains('NoteRepository')));
+      expect(
+        api.exportedNames,
+        containsAll(['createNote', 'Note', 'createNotebook']),
+      );
+
+      // DateTime mode changes only the TS spelling.
+      expect(api.usesFirestoreTimestamp, isFalse);
+      expect(firestoreApi.usesFirestoreTimestamp, isTrue);
+    });
+
+    test('facade matches golden (js-date)', () {
+      _expectGolden(
+        generateFacade(api, globalExportKey: '__dtb_exports_boundary_logic__'),
+        'boundary_logic/facade.dart',
+        update: update,
+      );
+    });
+
+    test('facade matches golden (firestore)', () {
+      _expectGolden(
+        generateFacade(
+          firestoreApi,
+          globalExportKey: '__dtb_exports_boundary_logic__',
+          dateTimeMode: DateTimeMode.firestoreTimestamp,
+        ),
+        'boundary_logic/facade.firestore.dart',
+        update: update,
+      );
+    });
+
+    test('.d.ts matches golden (js-date)', () {
+      _expectGolden(
+        generateDts(api),
+        'boundary_logic/index.d.ts',
+        update: update,
+      );
+    });
+
+    test('.d.ts matches golden (firestore)', () {
+      _expectGolden(
+        generateDts(firestoreApi),
+        'boundary_logic/index.firestore.d.ts',
+        update: update,
+      );
+    });
+  });
 }
 
 void _expectGolden(String actual, String goldenName, {required bool update}) {
