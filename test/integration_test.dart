@@ -394,15 +394,22 @@ void main() {
     test('build -> node named imports', () async {
       ensureFixtureResolved('hello_logic');
       final dist = freshTmpDir('js-esm/dist');
-      await buildNpmPackage(
+      final built = await buildNpmPackage(
         BuildOptions(
           packagePath: fixturePath('hello_logic'),
           outputPath: dist.path,
           engine: 'dart2js',
           moduleFormat: ModuleFormat.esm,
           npmPackageName: 'hello-logic',
-          runNpmInstall: false,
+          // Default: the output is completed as an npm project (no peer
+          // deps here, so this stays offline).
         ),
+      );
+      expect(built.npmInstalled, isTrue);
+      expect(
+        File(p.join(dist.path, 'package-lock.json')).existsSync(),
+        isTrue,
+        reason: 'npm install must initialize the output as an npm project',
       );
       final probe = p.join(dist.path, 'smoke.mjs');
       File(probe).writeAsStringSync('''

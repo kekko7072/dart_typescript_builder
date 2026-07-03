@@ -12,21 +12,61 @@ JS (or WASM), `dart:js_interop` bindings, and generated TypeScript
 declarations. It is a bindings generator — think `wasm-pack` for Dart — not a
 transpiler: the Dart stays Dart.
 
-## Usage
+## Setup (once, in your Dart package)
 
-```sh
-dart_typescript_builder build ./my_logic_package --out ./dist --package-name my-logic
+Add the builder as a dev dependency:
+
+```yaml
+# pubspec.yaml
+dev_dependencies:
+  dart_typescript_builder:
+    git: https://github.com/kekko7072/dart_typescript_builder
 ```
 
-Then, in your TypeScript backend:
+```sh
+dart pub get
+```
+
+## Build
+
+From the root of your Dart package:
 
 ```sh
-npm install ./dist
+dart run dart_typescript_builder build . --out typescript
+```
+
+That one command produces a **complete, ready-to-use npm package** in
+`typescript/`:
+
+- compiled logic (`<name>.dart.js` or `.wasm` + loader) and Node entry
+- `index.d.ts` TypeScript declarations + generated `README.md`
+- `package.json`, and `npm install` already run for you (first run creates
+  `package-lock.json`; declared peers like `firebase-admin` are installed
+  too — pass `--no-npm-install` to skip)
+- your package's `analysis_options.yaml` automatically excludes the output
+  folder from `dart analyze`
+
+Use it from TypeScript in the same repo:
+
+```json
+// your backend's package.json
+"dependencies": { "my-logic": "file:../my_logic_package/typescript" }
 ```
 
 ```ts
 import { createUser, User } from "my-logic";
 ```
+
+### Firebase backends
+
+```sh
+dart run dart_typescript_builder build . --out typescript --datetime firestore
+```
+
+Every Dart `DateTime` (including inside `toMap()`-style dynamic maps) crosses
+as a Firestore `Timestamp` from `firebase-admin/firestore`, so models flow
+straight into Firestore writes and out of snapshots — same shapes as your
+Flutter app.
 
 ### Options
 

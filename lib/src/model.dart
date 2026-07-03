@@ -278,19 +278,27 @@ final class CallbackType extends BoundaryType {
     return '($params) => ${returnType.tsSource}';
   }
 
-  // Function types must always be parenthesized inside composites/unions.
+  // Function types must always be parenthesized: a bare
+  // `(p0: T) => R | null` would bind the `| null` to the RETURN type.
   @override
-  String get tsSourceNested =>
+  String get tsSource =>
       isNullable ? '(($tsSourceCore) | null)' : '($tsSourceCore)';
+
+  @override
+  String get tsSourceNested => tsSource;
 
   @override
   String get dartSourceCore =>
       '${returnType.dartSource} Function('
       '${parameters.map((p) => p.dartSource).join(', ')})';
 
+  // Length-prefixed components: plain concatenation would be ambiguous
+  // (e.g. enums `A`+`B` vs a single enum `AEnumB`).
   @override
   String get mangledCore =>
-      'Fn${parameters.map((p) => p.mangled).join('')}To${returnType.mangled}';
+      'Fn${parameters.length}Of'
+      '${parameters.map((p) => '${p.mangled.length}${p.mangled}').join()}'
+      'To${returnType.mangled.length}${returnType.mangled}';
 }
 
 /// An exported enum: crosses as its value's name (a string-literal union in

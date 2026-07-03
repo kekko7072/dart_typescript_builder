@@ -184,7 +184,7 @@ bool _npmInstall(String outputDir, {required bool verbose}) {
   }
   final result = Process.runSync(
     'npm',
-    ['install', '--no-audit', '--no-fund', '--legacy-peer-deps'],
+    ['install', '--no-audit', '--no-fund'],
     workingDirectory: outputDir,
     runInShell: true,
   );
