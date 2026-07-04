@@ -69,9 +69,26 @@ void main(List<String> arguments) async {
         ..addFlag('verbose', abbr: 'v', negatable: false),
     );
 
+  // A bare invocation (the shape a post-`pub get` hook runs) builds with the
+  // arguments pinned in dart_typescript_builder.yaml next to pubspec.yaml.
+  var effectiveArguments = arguments;
+  if (arguments.isEmpty) {
+    final List<String>? configArgs;
+    try {
+      configArgs = readConfigArgs(Directory.current.path);
+    } on BuildException catch (e) {
+      stderr.writeln(e);
+      exit(_usageExitCode);
+    }
+    if (configArgs != null) {
+      stdout.writeln('Using $configFileName: ${configArgs.join(' ')}');
+      effectiveArguments = configArgs;
+    }
+  }
+
   final ArgResults results;
   try {
-    results = parser.parse(arguments);
+    results = parser.parse(effectiveArguments);
   } on FormatException catch (e) {
     stderr.writeln(e.message);
     _printUsage(parser, to: stderr);
@@ -139,6 +156,11 @@ void _printUsage(ArgParser parser, {required IOSink to}) {
     ..writeln(
       '      [--module commonjs|esm] [--package-name <npm-name>] '
       '[--verbose]',
+    )
+    ..writeln()
+    ..writeln(
+      'With no arguments, the build command is read from the `args:` entry '
+      'of $configFileName\nin the current directory (if present).',
     )
     ..writeln()
     ..writeln(parser.commands['build']!.usage);

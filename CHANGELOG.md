@@ -13,13 +13,26 @@
   Older firebase-admin versions missing an export (e.g. `VectorValue`) are
   tolerated. Available on both engines and from the library API
   (`BuildOptions.firestoreTypes`).
+- A bare `dart run dart_typescript_builder` (no arguments) now reads the
+  build command from the `args:` entry of `dart_typescript_builder.yaml`
+  in the current directory — one place to pin the flags, and post-`pub get`
+  automation hooks no longer need to parse the file themselves. A present
+  but unusable file (missing `args:`, or the pre-0.3 `inputs:`/`output:`
+  format) fails loudly with a migration message instead of printing usage.
+- The generated package now ships a `.gitignore` ignoring `node_modules/`,
+  so the output folder can be committed without dragging its installed
+  dependencies into version control.
 - Regenerated the stale `async_logic` goldens (the 0.3.0 hardening pass
   changed callback helper mangles and callback type parenthesization
   without refreshing them).
-- The tomorrowtech acceptance test now builds with `runNpmInstall: false`:
-  the default install fetched the real firebase-admin peer into the built
-  package, shadowing the offline stub with a second Timestamp class
-  identity.
+- The tomorrowtech acceptance test builds the real deployment shape —
+  `npm install` on generation (firebase-admin peer fetched into the
+  package's own node_modules) plus `--firestore-types`; its check script
+  resolves `Timestamp` through the installed package so both sides share
+  one class identity, with the offline stub as fallback.
+- Test consumers compile with `moduleResolution: node16`: TypeScript 6
+  turned the deprecated `node10` resolution into a hard error (TS5107),
+  which broke CI against the latest tsc.
 
 ## 0.3.0
 

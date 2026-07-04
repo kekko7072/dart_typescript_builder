@@ -27,6 +27,73 @@ dev_dependencies:
 dart pub get
 ```
 
+### Optional: pin the build in `dart_typescript_builder.yaml`
+
+Instead of remembering the flags, drop a `dart_typescript_builder.yaml`
+next to `pubspec.yaml` with the package's build command in one place:
+
+```yaml
+# Configuration for dart_typescript_builder
+# (https://github.com/kekko7072/dart_typescript_builder, v0.4.x).
+#
+# A bare `dart run dart_typescript_builder` (no arguments) reads the
+# `args:` line below and builds with it — so any automation (like the zsh
+# `dart`/`flutter` wrapper below) rebuilds the typescript/ npm package
+# after every successful `pub get` here.
+#
+# npm settings — the build creates a complete npm package in typescript/:
+#   --out typescript            output directory of the npm package
+#   --package-name ...          scoped npm name (version comes from
+#                               pubspec.yaml, `+build` suffix stripped)
+#   package.json, .gitignore + npm install (package-lock.json) are
+#   produced by the tool.
+#
+# Firebase usage — this package's models describe Firestore documents:
+#   --datetime firestore        every Dart DateTime crosses the boundary as a
+#                               Firestore Timestamp; firebase-admin is
+#                               declared as a peer dependency (>=11)
+#   --firestore-types           the full firebase-admin value set survives
+#                               inside dynamic data: Buffer/Uint8Array <->
+#                               Uint8List, pass-through GeoPoint,
+#                               DocumentReference, FieldValue, VectorValue
+
+args: build . --out typescript --package-name @my-org/my-logic --datetime firestore --firestore-types
+```
+
+With that file in place, a bare invocation builds with the pinned args:
+
+```sh
+dart run dart_typescript_builder
+```
+
+A missing or old-format file (`inputs:`/`output:`, pre-0.3) fails loudly
+with a migration message instead of silently printing usage — automations
+break visibly, not quietly.
+
+To rebuild automatically, add this to `~/.zshrc`: every `dart pub get` /
+`flutter pub get` in a package that has a `dart_typescript_builder.yaml`
+rebuilds its npm package:
+
+```zsh
+# Rebuild the generated npm package after every successful `pub get` in a
+# package that opts in with a dart_typescript_builder.yaml.
+_dtb_after_pub_get() {
+  [[ -f dart_typescript_builder.yaml ]] && command dart run dart_typescript_builder
+}
+
+dart() {
+  command dart "$@" || return $?
+  [[ "$1 $2" == "pub get" ]] && _dtb_after_pub_get
+  return 0
+}
+
+flutter() {
+  command flutter "$@" || return $?
+  [[ "$1 $2" == "pub get" ]] && _dtb_after_pub_get
+  return 0
+}
+```
+
 ## Build
 
 From the root of your Dart package:
