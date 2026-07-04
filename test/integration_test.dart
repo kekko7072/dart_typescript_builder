@@ -676,13 +676,16 @@ console.log("ESM_OK");
               engine: engine,
               npmPackageName: 'tomorrowtech-user',
               dateTimeMode: DateTimeMode.firestoreTimestamp,
-              // Keep the suite offline AND single-copy: a default npm
-              // install would fetch the real firebase-admin peer into the
-              // package's own node_modules, shadowing the stub written next
-              // to it — a second Timestamp class identity.
-              runNpmInstall: false,
+              firestoreTypes: true,
+              // Real deployment shape: `npm install` runs in the generated
+              // package and fetches the firebase-admin peer into its own
+              // node_modules. check.mjs resolves Timestamp through the
+              // installed package so both sides share one class identity.
+              runNpmInstall: true,
             ),
           );
+          // Offline fallback: when npm could not fetch the peer, module
+          // resolution falls through to this stub one level up.
           _writeFirebaseAdminStub(p.join(root.path, 'node_modules'));
           final script = p.join(root.path, 'check.mjs');
           File(script).writeAsStringSync(_tomorrowtechCheckMjs);
@@ -732,8 +735,8 @@ void _npmTscNode(
         : '''
 {
   "compilerOptions": {
-    "module": "commonjs",
-    "moduleResolution": "node",
+    "module": "node16",
+    "moduleResolution": "node16",
     "target": "es2020",
     "strict": true,
     "esModuleInterop": true,
@@ -904,8 +907,16 @@ export declare class FieldValue {
 
 const _tomorrowtechCheckMjs = '''
 import assert from "node:assert/strict";
-import { Timestamp } from "firebase-admin/firestore";
+import { createRequire } from "node:module";
 import * as tt from "tomorrowtech-user";
+
+// Resolve firebase-admin exactly like the installed package does (its own
+// node_modules first, then upward): one Timestamp class identity whether
+// npm install fetched the real peer or the offline stub is in use.
+const requireFromPackage = createRequire(
+  new URL("./node_modules/tomorrowtech-user/index.js", import.meta.url),
+);
+const { Timestamp } = requireFromPackage("firebase-admin/firestore");
 
 const doc = {
   platform: "app", delete: false, token: "tok-1", locale: "it",

@@ -63,6 +63,10 @@ PackageResult writeNpmPackage({
     _readme(npmName, target, api, engineId, firestoreTypes: firestoreTypes),
   );
 
+  // The output is meant to be committed as a source folder (npm install runs
+  // inside it): keep its dependencies out of version control.
+  File(p.join(outputDir, '.gitignore')).writeAsStringSync('node_modules/\n');
+
   return PackageResult(
     outputDir: outputDir,
     files: [
@@ -70,6 +74,7 @@ PackageResult writeNpmPackage({
       'index.d.ts',
       'package.json',
       'README.md',
+      '.gitignore',
     ],
   );
 }
