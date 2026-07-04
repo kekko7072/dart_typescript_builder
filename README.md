@@ -58,6 +58,10 @@ next to `pubspec.yaml` with the package's build command in one place:
 #                               DocumentReference, FieldValue, VectorValue
 
 args: build . --out typescript --package-name @my-org/my-logic --datetime firestore --firestore-types
+
+# `flutter clean` removes the generated npm package by default (see the zsh
+# wrapper below). Add `clean: false` to keep it in place instead.
+# clean: false
 ```
 
 With that file in place, a bare invocation builds with the pinned args:
@@ -70,15 +74,23 @@ A missing or old-format file (`inputs:`/`output:`, pre-0.3) fails loudly
 with a migration message instead of silently printing usage — automations
 break visibly, not quietly.
 
-To rebuild automatically, add this to `~/.zshrc`: every `dart pub get` /
-`flutter pub get` in a package that has a `dart_typescript_builder.yaml`
-rebuilds its npm package:
+To rebuild (and clean up) automatically, add this to `~/.zshrc`: every
+`dart pub get` / `flutter pub get` in a package that has a
+`dart_typescript_builder.yaml` rebuilds its npm package, and every
+`flutter clean` removes it again — so the generated package doesn't outlive
+the Flutter build artifacts it was created alongside:
 
 ```zsh
 # Rebuild the generated npm package after every successful `pub get` in a
 # package that opts in with a dart_typescript_builder.yaml.
 _dtb_after_pub_get() {
   [[ -f dart_typescript_builder.yaml ]] && command dart run dart_typescript_builder
+}
+
+# Remove the generated npm package on `flutter clean` (honors `clean: false`
+# in dart_typescript_builder.yaml, which keeps the output folder).
+_dtb_after_clean() {
+  [[ -f dart_typescript_builder.yaml ]] && command dart run dart_typescript_builder clean
 }
 
 dart() {
@@ -90,6 +102,7 @@ dart() {
 flutter() {
   command flutter "$@" || return $?
   [[ "$1 $2" == "pub get" ]] && _dtb_after_pub_get
+  [[ "$1" == "clean" ]] && _dtb_after_clean
   return 0
 }
 ```
@@ -177,6 +190,25 @@ logic unharmed. Older firebase-admin versions that don't export a class
 (e.g. `VectorValue` before 12.2) are tolerated: `GeoPoint` and document
 references are also recognized structurally, even from a different
 firebase-admin copy.
+
+## Clean
+
+The generated npm package is a build artifact, so `clean` removes it — the
+mirror of `build`:
+
+```sh
+dart run dart_typescript_builder clean
+```
+
+It deletes the output folder that `build` would create: the `--out` pinned in
+`dart_typescript_builder.yaml` (e.g. `typescript/`), or `dist/` when there's
+no config. Override the target with `--out <dir>`, or point at another package
+with `dart run dart_typescript_builder clean <path>`.
+
+Wire it into `flutter clean` with the zsh wrapper above and the generated
+package is removed alongside the Flutter build artifacts. To keep the folder
+on `clean` for a given package, set `clean: false` in its
+`dart_typescript_builder.yaml`.
 
 ## What crosses the boundary
 

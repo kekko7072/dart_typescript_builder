@@ -19,6 +19,13 @@
   automation hooks no longer need to parse the file themselves. A present
   but unusable file (missing `args:`, or the pre-0.3 `inputs:`/`output:`
   format) fails loudly with a migration message instead of printing usage.
+- New `clean` command (`dart run dart_typescript_builder clean`): the mirror
+  of `build`, it removes the generated npm package folder — the `--out`
+  pinned in `dart_typescript_builder.yaml` (else `dist/`), overridable with
+  `--out <dir>` or a `<path>` argument. The README's zsh wrapper now wires it
+  into `flutter clean` so the artifact is removed alongside the Flutter build
+  output. A `clean: false` key in the config opts a package out and keeps the
+  folder; a non-boolean `clean:` value fails loudly.
 - The generated package now ships a `.gitignore` ignoring `node_modules/`,
   so the output folder can be committed without dragging its installed
   dependencies into version control.

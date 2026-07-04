@@ -91,6 +91,49 @@ output: typescript/src
     });
   });
 
+  group('readConfig clean setting', () {
+    test('defaults to enabled when `clean:` is absent', () {
+      final dir = writeConfig(
+        'clean-default',
+        'args: build . --out typescript\n',
+      );
+      expect(readConfig(dir.path)!.cleanEnabled, isTrue);
+    });
+
+    test('`clean: false` disables removal', () {
+      final dir = writeConfig(
+        'clean-false',
+        'args: build . --out typescript\nclean: false\n',
+      );
+      expect(readConfig(dir.path)!.cleanEnabled, isFalse);
+    });
+
+    test('`clean: true` keeps removal enabled', () {
+      final dir = writeConfig(
+        'clean-true',
+        'args: build . --out typescript\nclean: true\n',
+      );
+      expect(readConfig(dir.path)!.cleanEnabled, isTrue);
+    });
+
+    test('a non-boolean `clean:` fails loudly', () {
+      final dir = writeConfig(
+        'clean-bad',
+        'args: build . --out typescript\nclean: maybe\n',
+      );
+      expect(
+        () => readConfig(dir.path),
+        throwsA(
+          isA<BuildException>().having(
+            (e) => e.message,
+            'message',
+            contains('clean:'),
+          ),
+        ),
+      );
+    });
+  });
+
   group('bare CLI invocation', () {
     final cliScript = p.canonicalize(
       p.join('bin', 'dart_typescript_builder.dart'),
@@ -131,6 +174,87 @@ output: typescript/src
       final result = runBareCli(dir.path);
       expect(result.exitCode, 64);
       expect(result.stderr, contains('Usage:'));
+    });
+  });
+
+  group('clean command', () {
+    final cliScript = p.canonicalize(
+      p.join('bin', 'dart_typescript_builder.dart'),
+    );
+
+    ProcessResult runClean(String cwd, [List<String> extra = const []]) =>
+        Process.runSync(Platform.resolvedExecutable, [
+          cliScript,
+          'clean',
+          ...extra,
+        ], workingDirectory: cwd);
+
+    // Creates a non-empty <dir>/<out> folder, standing in for a generated
+    // npm package.
+    Directory seedOutput(Directory dir, String out) {
+      final outDir = Directory(p.join(dir.path, out))
+        ..createSync(recursive: true);
+      File(p.join(outDir.path, 'index.d.ts')).writeAsStringSync('// generated');
+      return outDir;
+    }
+
+    test('removes the output dir pinned in the config', () {
+      final dir = freshTmpDir('clean/config-out');
+      File(
+        p.join(dir.path, configFileName),
+      ).writeAsStringSync('args: build . --out typescript\n');
+      final outDir = seedOutput(dir, 'typescript');
+      final result = runClean(dir.path);
+      expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}');
+      expect(outDir.existsSync(), isFalse);
+      expect(result.stdout, contains('typescript'));
+    });
+
+    test('keeps the output dir when `clean: false`', () {
+      final dir = freshTmpDir('clean/disabled');
+      File(
+        p.join(dir.path, configFileName),
+      ).writeAsStringSync('args: build . --out typescript\nclean: false\n');
+      final outDir = seedOutput(dir, 'typescript');
+      final result = runClean(dir.path);
+      expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}');
+      expect(outDir.existsSync(), isTrue);
+      expect(result.stdout, contains('Keeping'));
+    });
+
+    test('--out overrides the config-pinned output dir', () {
+      final dir = freshTmpDir('clean/out-override');
+      File(
+        p.join(dir.path, configFileName),
+      ).writeAsStringSync('args: build . --out typescript\n');
+      final pinned = seedOutput(dir, 'typescript');
+      final override = seedOutput(dir, 'build_ts');
+      final result = runClean(dir.path, ['--out', 'build_ts']);
+      expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}');
+      expect(override.existsSync(), isFalse);
+      expect(pinned.existsSync(), isTrue);
+    });
+
+    test('falls back to the default output dir with no config', () {
+      final dir = freshTmpDir('clean/no-config');
+      final outDir = seedOutput(dir, defaultOutputDir);
+      final result = runClean(dir.path);
+      expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}');
+      expect(outDir.existsSync(), isFalse);
+    });
+
+    test('reports nothing to remove when the dir is absent', () {
+      final dir = freshTmpDir('clean/absent');
+      final result = runClean(dir.path);
+      expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}');
+      expect(result.stdout, contains('Nothing to remove'));
+    });
+
+    test('rejects more than one path argument', () {
+      final dir = freshTmpDir('clean/too-many');
+      final result = runClean(dir.path, ['a', 'b']);
+      expect(result.exitCode, 64);
+      expect(result.stderr, contains('at most one'));
     });
   });
 }
